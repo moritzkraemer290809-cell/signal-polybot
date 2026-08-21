@@ -19,7 +19,8 @@ in eine private Telegram-Gruppe. **Der Nutzer handelt manuell.**
 | 2 | Scaffold, Dependencies, Docker, Settings | ✅ |
 | 3 | Datenmodelle, Alembic, PostgreSQL, Redis, Logging, Health | ✅ |
 | 4 | Polymarket REST Client, Instrument Discovery | ✅ |
-| 5+ | WebSocket-Layer, Telegram, Strategie, Risiko/Kosten, Lifecycle, Shadow Mode, Backtests | ⏳ geplant |
+| 5 | WebSocket Data Layer, Orderbuch, Cache/Freshness, Data Quality | ✅ |
+| 6+ | Telegram, Strategie, Risiko/Kosten, Lifecycle, Shadow Mode, Backtests | ⏳ geplant |
 
 ## Architekturüberblick
 
@@ -43,7 +44,7 @@ flowchart LR
     TG["Telegram-Gruppe<br/>(einziger Output, Phase 6)"]
 
     REST --> ADP --> DATA
-    WS -.Phase 5.-> ADP
+    WS --> ADP
     DATA --> PG
     DATA --> RD
     DATA --> STRAT --> MON -.-> TG
@@ -124,9 +125,12 @@ Discovery über `/v1/info/instruments` aufgelöst.
 
 | Endpoint | Zweck |
 |----------|-------|
-| `GET /health` | Prozess, PostgreSQL, Redis, Telegram-Konfiguration, WebSocket, Discovery-Frische |
-| `GET /status` | Botzustand (inkl. Kill Switch), Universum, offene Signale, letzte Datenzeit |
-| `GET /dashboard` | Kompakte JSON-Übersicht + Metriken |
+| `GET /health` | Prozess, PostgreSQL, Redis, Telegram-Konfig, WebSocket-Liveness/Subscriptions, kritische Channel-Frische, Anzahl `DATA_STALE`-Assets |
+| `GET /status` | Botzustand (inkl. Kill Switch), Universum, Connection State, Reconnects, invalide Events, Datenqualität pro Instrument, Orderbuch-Resyncs, Buffer-Statistiken |
+| `GET /dashboard` | Kompakte JSON-Übersicht + Metriken + Datenqualität |
+
+Ein DB-/Redis-Ausfall degradiert `/health` (503) bzw. liefert `database:
+"unavailable"` in `/status` - der Prozess und der Marktdaten-Feed laufen weiter.
 
 ## Lizenz / Haftung
 

@@ -129,3 +129,40 @@ class SystemEventLevel(StrEnum):
     WARNING = "WARNING"
     ERROR = "ERROR"
     CRITICAL = "CRITICAL"
+
+
+class WsConnectionState(StrEnum):
+    DISCONNECTED = "DISCONNECTED"
+    CONNECTING = "CONNECTING"
+    CONNECTED = "CONNECTED"
+    RECONNECTING = "RECONNECTING"
+    DEGRADED = "DEGRADED"
+    STOPPING = "STOPPING"
+
+
+class Channel(StrEnum):
+    """Public WebSocket data channels."""
+
+    TICKER = "ticker"
+    BBO = "bbo"
+    TRADES = "trades"
+    ORDERBOOK = "orderbook"
+    KLINES = "klines"
+
+
+class FreshnessStatus(StrEnum):
+    FRESH = "FRESH"
+    AGING = "AGING"
+    STALE = "STALE"
+    INVALID = "INVALID"
+    RESYNCING = "RESYNCING"
+    UNKNOWN = "UNKNOWN"
+
+
+class InstrumentQualityStatus(StrEnum):
+    HEALTHY = "HEALTHY"
+    DEGRADED = "DEGRADED"
+    DATA_STALE = "DATA_STALE"
+    DATA_INVALID = "DATA_INVALID"
+    ORDERBOOK_RESYNCING = "ORDERBOOK_RESYNCING"
+    UNAVAILABLE = "UNAVAILABLE"

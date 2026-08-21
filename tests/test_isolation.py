@@ -105,3 +105,33 @@ def test_env_example_has_no_real_secrets() -> None:
     assert "TELEGRAM_BOT_TOKEN=" in env_example
     assert "TELEGRAM_BOT_TOKEN=\n" in env_example or "TELEGRAM_BOT_TOKEN=$" not in env_example
     assert "REDIS_KEY_PREFIX=polysignal:" in env_example
+
+
+def test_phase5_data_layer_produces_no_signals_or_telegram() -> None:
+    """The realtime data layer must not import strategy/risk/cost/signal or
+    Telegram modules - phase 5 is pure data infrastructure."""
+    forbidden_prefixes = (
+        "app.strategy",
+        "app.risk",
+        "app.costs",
+        "app.monitoring",
+        "app.adapters.telegram",
+    )
+    phase5_files = [
+        *sorted((APP_DIR / "data").rglob("*.py")),
+        APP_DIR / "adapters" / "polymarket_ws.py",
+        APP_DIR / "adapters" / "rate_limiter.py",
+    ]
+    for path in phase5_files:
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            modules: list[str] = []
+            if isinstance(node, ast.Import):
+                modules = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                modules = [node.module]
+            for module in modules:
+                for prefix in forbidden_prefixes:
+                    assert not module.startswith(prefix), (
+                        f"{path} imports {module!r} - phase 5 must stay signal-free"
+                    )

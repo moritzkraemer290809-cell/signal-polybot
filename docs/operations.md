@@ -41,6 +41,22 @@ Korrelations-IDs werden pro Signal-Lifecycle gebunden (ab Phase 10 durchgaengig)
 | WebSocket | – | ab Phase 5 |
 | Telegram | – | ab Phase 6 (Bot-Token, Gruppen-ID, Admin-IDs in `.env`) |
 
+## WebSocket-Betrieb (Phase 5)
+
+- Eine zentrale Verbindung fuer alle Instrumente und Channels; Subscriptions
+  folgen automatisch dem Discovery-Universum (`UniverseRefreshJob`).
+- Kernparameter in `.env` (`POLYMARKET_WS_*`): Heartbeat
+  (`PING_INTERVAL/PING_TIMEOUT`), Backoff (`RECONNECT_MIN/MAX/JITTER`),
+  Fehlversuch-Fenster (`MAX_RECONNECT_ATTEMPTS`/`RECONNECT_WINDOW_SECONDS`),
+  Queue-Groesse, Orderbuch-Tiefe, Persist-Batching. Konservative Defaults in
+  `.env.example` sind fuer 2 Instrumente x 8 Channels ausgelegt.
+- `POLYMARKET_WS_ENABLED=false` startet die App ohne Datenfeed (z. B. reine
+  API-/DB-Wartung); `/health` zeigt dann `websocket: disabled`.
+- Datenqualitaet je Instrument: `/status` -> `data_quality` (Status, Channel-
+  Frische, Gruende). Regeln: siehe docs/architecture.md.
+- Redis-/DB-Ausfall: Feed laeuft weiter; Cache/Buffer melden degraded und
+  fliessen in den Qualitaetsstatus ein. Kein Prozessabsturz.
+
 ## Backup & Recovery
 
 Persistente Daten liegen in den Volumes `polysignal_pgdata` und

@@ -70,3 +70,49 @@ def test_polymarket_book_weight_mapping() -> None:
 def test_redis_prefix_override(monkeypatch) -> None:
     monkeypatch.setenv("REDIS_KEY_PREFIX", "polysignal:")
     assert RedisSettings(_env_file=None).key_prefix == "polysignal:"
+
+
+def test_ws_settings_env_variable_names(monkeypatch) -> None:
+    from app.config import PolymarketWsSettings
+
+    monkeypatch.setenv("POLYMARKET_PERPS_WS_URL", "wss://example.test/v1/ws")
+    monkeypatch.setenv("POLYMARKET_WS_ENABLED", "false")
+    monkeypatch.setenv("POLYMARKET_WS_RECONNECT_MAX_SECONDS", "45")
+    monkeypatch.setenv("POLYMARKET_WS_MAX_SUBSCRIPTIONS", "50")
+    monkeypatch.setenv("POLYMARKET_WS_EVENT_QUEUE_SIZE", "500")
+    monkeypatch.setenv("POLYMARKET_WS_PERSIST_BATCH_SIZE", "99")
+    monkeypatch.setenv("POLYMARKET_WS_KLINE_TIMEFRAMES", "1m,5m")
+    ws = PolymarketWsSettings(_env_file=None)
+    assert ws.url == "wss://example.test/v1/ws"
+    assert ws.enabled is False
+    assert ws.reconnect_max_seconds == 45
+    assert ws.max_subscriptions == 50
+    assert ws.event_queue_size == 500
+    assert ws.persist_batch_size == 99
+    assert ws.kline_timeframes == ["1m", "5m"]
+
+
+def test_freshness_settings_env_variable_names(monkeypatch) -> None:
+    from app.config import DataFreshnessSettings
+
+    monkeypatch.setenv("DATA_FRESHNESS_TICKER_SECONDS", "7")
+    monkeypatch.setenv("DATA_FRESHNESS_BBO_SECONDS", "5")
+    monkeypatch.setenv("DATA_FRESHNESS_ORDERBOOK_SECONDS", "9")
+    monkeypatch.setenv("DATA_FRESHNESS_TRADES_SECONDS", "60")
+    monkeypatch.setenv("DATA_FRESHNESS_CANDLES_SECONDS", "120")
+    freshness = DataFreshnessSettings(_env_file=None)
+    assert freshness.ticker_seconds == 7
+    assert freshness.bbo_seconds == 5
+    assert freshness.orderbook_seconds == 9
+    assert freshness.trades_seconds == 60
+    assert freshness.candles_seconds == 120
+
+
+def test_data_quality_outlier_env_alias(monkeypatch) -> None:
+    from app.config import DataQualitySettings
+
+    monkeypatch.setenv("DATA_OUTLIER_MAX_DEVIATION_BPS", "750")
+    monkeypatch.setenv("DATA_QUALITY_INVALID_EVENT_THRESHOLD", "5")
+    quality = DataQualitySettings(_env_file=None)
+    assert quality.outlier_max_deviation_bps == 750
+    assert quality.invalid_event_threshold == 5

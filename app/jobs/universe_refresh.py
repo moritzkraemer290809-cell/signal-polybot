@@ -5,22 +5,32 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import random
+from collections.abc import Awaitable, Callable
 
 from app.config import UniverseSettings
-from app.data.instrument_service import InstrumentService
+from app.data.instrument_service import InstrumentService, UniverseRefreshResult
 from app.observability.logging import get_logger
+
+RefreshListener = Callable[[UniverseRefreshResult], Awaitable[None]]
 
 
 class UniverseRefreshJob:
-    """Runs :meth:`InstrumentService.refresh` periodically with jitter."""
+    """Runs :meth:`InstrumentService.refresh` periodically with jitter.
+
+    ``on_refresh`` lets the market data layer reconcile its WebSocket
+    subscriptions after every successful refresh (idempotent sub/unsub,
+    including delistings).
+    """
 
     def __init__(
         self,
         service: InstrumentService,
         settings: UniverseSettings,
+        on_refresh: RefreshListener | None = None,
     ) -> None:
         self._service = service
         self._settings = settings
+        self._on_refresh = on_refresh
         self._task: asyncio.Task[None] | None = None
         self._log = get_logger("universe_refresh_job")
 
@@ -40,7 +50,9 @@ class UniverseRefreshJob:
     async def _run(self) -> None:
         while True:
             try:
-                await self._service.refresh()
+                result = await self._service.refresh()
+                if self._on_refresh is not None:
+                    await self._on_refresh(result)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # refresh must never kill the process

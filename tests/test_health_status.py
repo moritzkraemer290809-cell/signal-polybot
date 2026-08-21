@@ -104,3 +104,143 @@ def test_dashboard_summary() -> None:
     body = response.json()
     assert body["enabled_markets"] == ["BTC-PERP"]
     assert "metrics" in body
+
+
+class FakeWsClient:
+    def __init__(self) -> None:
+        from app.domain.enums import WsConnectionState
+
+        self.state = WsConnectionState.CONNECTED
+        self.reconnect_count = 2
+        self.messages_received = 1234
+        self.dropped_frames = 0
+        self.last_message_at = datetime(2026, 8, 21, 12, 0, 5, tzinfo=UTC)
+        self.connected_since = datetime(2026, 8, 21, 11, 0, tzinfo=UTC)
+        self.active_subscription_count = 12
+        self.desired_subscription_count = 12
+
+    @property
+    def is_connected(self) -> bool:
+        from app.domain.enums import WsConnectionState
+
+        return self.state is WsConnectionState.CONNECTED
+
+
+class FakeDataQuality:
+    def summary(self):
+        return {
+            "instruments": {
+                "BTC-PERP": {
+                    "status": "HEALTHY",
+                    "channels": {
+                        "ticker": "FRESH",
+                        "bbo": "FRESH",
+                        "orderbook": "FRESH",
+                        "trades": "AGING",
+                        "klines": "FRESH",
+                    },
+                    "invalid_events_in_window": 0,
+                    "resync_requests": 1,
+                    "last_event_at": None,
+                    "reasons": [],
+                }
+            },
+            "status_counts": {"HEALTHY": 1},
+            "stale_count": 0,
+        }
+
+
+class FakeMarketData:
+    buffers = None
+
+    def trackers(self):
+        return [SimpleNamespace(symbol="BTC-PERP")]
+
+    def total_invalid_events(self):
+        return 3
+
+    def total_resync_requests(self):
+        return 1
+
+
+def make_ws_ctx(**kwargs):
+    ctx = make_ctx(**kwargs)
+    ctx.ws_client = FakeWsClient()
+    ctx.data_quality = FakeDataQuality()
+    ctx.market_data = FakeMarketData()
+    return ctx
+
+
+def test_health_includes_websocket_and_freshness() -> None:
+    app = create_app(context=make_ws_ctx())
+    with TestClient(app) as client:
+        body = client.get("/health").json()
+    ws = body["components"]["websocket"]
+    assert ws["state"] == "CONNECTED"
+    assert ws["active_connections"] == 1
+    assert ws["active_subscriptions"] == 12
+    assert body["data_stale_assets"] == 0
+    critical = body["critical_channel_freshness"]["BTC-PERP"]
+    assert set(critical) == {"ticker", "bbo", "orderbook"}  # no non-critical leak
+
+
+def test_health_reports_websocket_disabled_without_client() -> None:
+    app = create_app(context=make_ctx())
+    with TestClient(app) as client:
+        body = client.get("/health").json()
+    assert body["components"]["websocket"] == "disabled"
+
+
+def test_status_includes_connection_and_quality() -> None:
+    app = create_app(context=make_ws_ctx())
+    with TestClient(app) as client:
+        body = client.get("/status").json()
+    assert body["websocket"]["reconnects"] == 2
+    assert body["websocket"]["state"] == "CONNECTED"
+    assert body["market_data"]["invalid_events_total"] == 3
+    assert body["market_data"]["orderbook_resync_requests"] == 1
+    assert body["data_quality"]["instruments"]["BTC-PERP"]["status"] == "HEALTHY"
+
+
+def test_status_contains_no_raw_payloads_or_secrets() -> None:
+    app = create_app(context=make_ws_ctx())
+    with TestClient(app) as client:
+        text = client.get("/status").text
+    assert "bot_token" not in text
+    assert "TELEGRAM" not in text
+
+
+class FailingRepo:
+    async def list_all(self):
+        raise ConnectionError("db down")
+
+    async def list_enabled(self):
+        raise ConnectionError("db down")
+
+    async def count_open(self):
+        raise ConnectionError("db down")
+
+
+def test_status_survives_database_outage() -> None:
+    ctx = make_ctx()
+    ctx.instrument_repo = FailingRepo()
+    ctx.signal_repo = FailingRepo()
+    app = create_app(context=ctx)
+    with TestClient(app) as client:
+        response = client.get("/status")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["database"] == "unavailable"
+    assert body["universe"] is None
+    assert body["open_signals"] is None
+
+
+def test_dashboard_survives_database_outage() -> None:
+    ctx = make_ctx()
+    ctx.instrument_repo = FailingRepo()
+    ctx.signal_repo = FailingRepo()
+    app = create_app(context=ctx)
+    with TestClient(app) as client:
+        response = client.get("/dashboard")
+    assert response.status_code == 200
+    assert response.json()["enabled_markets"] is None

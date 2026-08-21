@@ -1,4 +1,5 @@
-"""Health endpoint: process, PostgreSQL, Redis, Telegram config, WebSocket, data freshness."""
+"""Health endpoint: process, PostgreSQL, Redis, Telegram config, WebSocket,
+subscriptions and data freshness. No secrets, no raw payloads."""
 
 from __future__ import annotations
 
@@ -19,13 +20,44 @@ async def health(request: Request, response: Response) -> dict[str, Any]:
     telegram_status = "configured" if ctx.settings.telegram.configured else "not_configured"
     last_refresh = ctx.instrument_service.last_refresh_at
 
+    ws_client = getattr(ctx, "ws_client", None)
+    data_quality = getattr(ctx, "data_quality", None)
+
+    if ws_client is None:
+        websocket: dict[str, Any] | str = "disabled"
+        stale_assets = None
+        critical_freshness: dict[str, Any] | None = None
+    else:
+        websocket = {
+            "state": ws_client.state.value,
+            "active_connections": 1 if ws_client.is_connected else 0,
+            "active_subscriptions": ws_client.active_subscription_count,
+            "desired_subscriptions": ws_client.desired_subscription_count,
+            "last_message_at": (
+                ws_client.last_message_at.isoformat() if ws_client.last_message_at else None
+            ),
+        }
+        stale_assets = None
+        critical_freshness = None
+        if data_quality is not None:
+            summary = data_quality.summary()
+            stale_assets = summary["stale_count"]
+            critical_freshness = {
+                symbol: {
+                    channel: value
+                    for channel, value in info["channels"].items()
+                    if channel in ("ticker", "bbo", "orderbook")
+                }
+                for symbol, info in summary["instruments"].items()
+            }
+
     components = {
         "process": "ok",
         "postgres": "ok" if db_ok else "unavailable",
         "redis": "ok" if redis_ok else "unavailable",
         "telegram": telegram_status,
-        "websocket": "not_started",  # data layer arrives in phase 5
-        "instrument_discovery": ("ok" if last_refresh is not None else "pending"),
+        "websocket": websocket,
+        "instrument_discovery": "ok" if last_refresh is not None else "pending",
     }
     healthy = db_ok and redis_ok
     if not healthy:
@@ -34,5 +66,7 @@ async def health(request: Request, response: Response) -> dict[str, Any]:
         "status": "ok" if healthy else "degraded",
         "timestamp": datetime.now(tz=UTC).isoformat(),
         "components": components,
+        "data_stale_assets": stale_assets,
+        "critical_channel_freshness": critical_freshness,
         "last_universe_refresh": last_refresh.isoformat() if last_refresh else None,
     }

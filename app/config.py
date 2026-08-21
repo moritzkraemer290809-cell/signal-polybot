@@ -13,7 +13,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, SecretStr, field_validator
+from pydantic import AliasChoices, BaseModel, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -108,7 +108,6 @@ class PolymarketSettings(_EnvSettings):
     )
 
     rest_base_url: str = "https://api.perpetuals.polymarket.com"
-    ws_url: str = "wss://ws.perpetuals.polymarket.com/v1/ws"
     request_timeout_seconds: float = 10.0
     max_retries: int = 3
     backoff_base_seconds: float = 0.5
@@ -117,6 +116,66 @@ class PolymarketSettings(_EnvSettings):
     instrument_cache_ttl_seconds: float = 300.0
     klines_cache_ttl_seconds: float = 60.0
     endpoint_weights: EndpointWeights = Field(default_factory=EndpointWeights)
+
+
+class PolymarketWsSettings(_EnvSettings):
+    """Public Polymarket Perps WebSocket configuration (read-only market data)."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="POLYMARKET_WS_", env_file=str(ENV_FILE), extra="ignore"
+    )
+
+    url: str = Field(
+        default="wss://ws.perpetuals.polymarket.com/v1/ws",
+        validation_alias=AliasChoices("POLYMARKET_PERPS_WS_URL", "POLYMARKET_WS_URL"),
+    )
+    enabled: bool = True
+    connect_timeout_seconds: float = 10.0
+    ping_interval_seconds: float = 20.0
+    ping_timeout_seconds: float = 10.0
+    reconnect_min_seconds: float = 1.0
+    reconnect_max_seconds: float = 60.0
+    reconnect_jitter_seconds: float = 2.0
+    #: reconnect attempts allowed inside ``reconnect_window_seconds`` before the
+    #: connection is marked DEGRADED (it keeps retrying at max backoff).
+    max_reconnect_attempts: int = 10
+    reconnect_window_seconds: float = 300.0
+    #: hard cap from the public API: 100 subscriptions per connection.
+    max_subscriptions: int = 100
+    event_queue_size: int = 10_000
+    #: depth requested/kept for the in-memory order book per instrument.
+    orderbook_depth: int = 100
+    persist_batch_size: int = 200
+    persist_flush_seconds: float = 5.0
+    #: candle timeframes subscribed per instrument.
+    kline_timeframes: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["1m", "5m", "15m", "1h"]
+    )
+
+    @field_validator("kline_timeframes", mode="before")
+    @classmethod
+    def _parse_timeframes(cls, value: object) -> object:
+        return _split_csv(value)
+
+
+class DataFreshnessSettings(_EnvSettings):
+    """Per-channel staleness thresholds in seconds.
+
+    Age <= aging_fraction * threshold  -> FRESH
+    Age <= threshold                   -> AGING
+    Age >  threshold                   -> STALE
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="DATA_FRESHNESS_", env_file=str(ENV_FILE), extra="ignore"
+    )
+
+    ticker_seconds: float = 15.0
+    bbo_seconds: float = 10.0
+    orderbook_seconds: float = 15.0
+    trades_seconds: float = 300.0
+    candles_seconds: float = 180.0
+    aging_fraction: float = 0.5
 
 
 class TelegramSettings(_EnvSettings):
@@ -174,9 +233,19 @@ class DataQualitySettings(_EnvSettings):
         env_prefix="DATA_QUALITY_", env_file=str(ENV_FILE), extra="ignore"
     )
 
-    ticker_stale_after_seconds: float = 30.0
-    orderbook_stale_after_seconds: float = 30.0
-    candle_stale_after_seconds: float = 180.0
+    #: invalid events per instrument inside ``invalid_event_window_seconds``
+    #: after which the instrument is classified DATA_INVALID.
+    invalid_event_threshold: int = 20
+    invalid_event_window_seconds: float = 60.0
+    #: max plausible deviation of an incoming price vs the last mark price.
+    outlier_max_deviation_bps: float = Field(
+        default=500.0,
+        validation_alias=AliasChoices(
+            "DATA_OUTLIER_MAX_DEVIATION_BPS", "DATA_QUALITY_OUTLIER_MAX_DEVIATION_BPS"
+        ),
+    )
+    #: mark/index/mid divergence beyond this marks the instrument DEGRADED.
+    mark_divergence_degraded_bps: float = 300.0
 
 
 class Settings(BaseModel):
@@ -187,6 +256,8 @@ class Settings(BaseModel):
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
     redis: RedisSettings = Field(default_factory=RedisSettings)
     polymarket: PolymarketSettings = Field(default_factory=PolymarketSettings)
+    ws: PolymarketWsSettings = Field(default_factory=PolymarketWsSettings)
+    freshness: DataFreshnessSettings = Field(default_factory=DataFreshnessSettings)
     telegram: TelegramSettings = Field(default_factory=TelegramSettings)
     universe: UniverseSettings = Field(default_factory=UniverseSettings)
     data_quality: DataQualitySettings = Field(default_factory=DataQualitySettings)

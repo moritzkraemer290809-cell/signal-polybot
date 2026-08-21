@@ -28,6 +28,20 @@
 - Docker-Ressourcen sind `polysignal_`-praefixiert; DB
   `polysignal_intelligence`, User `polysignal_user`, Redis-Prefix `polysignal:`.
 
+## WebSocket-Datenlayer (Phase 5)
+
+- Der WS-Client verbindet sich ausschliesslich mit der oeffentlichen
+  Marktdaten-URL und sendet ausser `sub`/`unsub` nichts - keine Auth,
+  keine Keys, keine privaten Channels.
+- Es werden nie vollstaendige Roh-Payloads geloggt - nur Channel-Namen,
+  Groessen, Zaehler und Fehlerklassen.
+- Ungueltige oder unplausible Events (NaN/Infinity, negative Preise,
+  gekreuzte Buecher, Outlier) werden verworfen und niemals zu Marktstatus
+  oder (spaeter) Signalen verarbeitet.
+- Phase 5 enthaelt keinerlei Strategie-, Risiko-, Kosten- oder
+  Telegram-Logik; ein Test (`tests/test_isolation.py`) erzwingt, dass der
+  Datenlayer solche Module nicht importiert.
+
 ## Betriebssicherheit
 
 - Gewichteter Rate Limiter unterhalb des dokumentierten Polymarket-Budgets.
