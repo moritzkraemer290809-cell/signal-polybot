@@ -485,3 +485,272 @@ class SessionEvent(Base):
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
     )
+
+
+class FeatureSnapshot(Base):
+    """Immutable feature snapshot per evaluation (research reproducibility)."""
+
+    __tablename__ = "feature_snapshots"
+    __table_args__ = (sa.Index("ix_feature_snapshots_instrument_as_of", "instrument_pk", "as_of"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True)
+    instrument_pk: Mapped[int] = mapped_column(
+        sa.ForeignKey("instruments.id", ondelete="CASCADE"), nullable=False
+    )
+    symbol: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    as_of: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+    candle_window_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
+    feature_values: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
+    feature_validity: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
+    warnings: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
+    strategy_name: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    strategy_version: Mapped[str] = mapped_column(sa.String(32), nullable=False, index=True)
+    feature_schema_version: Mapped[str] = mapped_column(sa.String(16), nullable=False)
+    config_hash: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+    )
+
+
+class SwingPoint(Base):
+    __tablename__ = "swing_points"
+    __table_args__ = (
+        sa.UniqueConstraint(
+            "instrument_pk",
+            "timeframe",
+            "swing_type",
+            "candle_open_time",
+            "strategy_version",
+            name="uq_swing_points_identity",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        sa.BigInteger().with_variant(sa.Integer(), "sqlite"), primary_key=True, autoincrement=True
+    )
+    instrument_pk: Mapped[int] = mapped_column(
+        sa.ForeignKey("instruments.id", ondelete="CASCADE"), nullable=False
+    )
+    timeframe: Mapped[str] = mapped_column(sa.String(8), nullable=False)
+    swing_type: Mapped[str] = mapped_column(sa.String(8), nullable=False)
+    price: Mapped[Decimal] = mapped_column(PriceNumeric, nullable=False)
+    candle_open_time: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+    confirmed_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+    strength: Mapped[Decimal | None] = mapped_column(PriceNumeric)
+    relevance: Mapped[Decimal | None] = mapped_column(PriceNumeric)
+    params: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
+    strategy_version: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+    )
+
+
+class StructureEventRecord(Base):
+    __tablename__ = "structure_events"
+    __table_args__ = (
+        sa.UniqueConstraint(
+            "instrument_pk",
+            "timeframe",
+            "event_type",
+            "confirm_close_time",
+            "strategy_version",
+            name="uq_structure_events_identity",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        sa.BigInteger().with_variant(sa.Integer(), "sqlite"), primary_key=True, autoincrement=True
+    )
+    instrument_pk: Mapped[int] = mapped_column(
+        sa.ForeignKey("instruments.id", ondelete="CASCADE"), nullable=False
+    )
+    timeframe: Mapped[str] = mapped_column(sa.String(8), nullable=False)
+    event_type: Mapped[str] = mapped_column(sa.String(32), nullable=False, index=True)
+    price: Mapped[Decimal] = mapped_column(PriceNumeric, nullable=False)
+    reference_swing: Mapped[str | None] = mapped_column(sa.String(96))
+    confirm_close_time: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+    detail: Mapped[str | None] = mapped_column(sa.Text)
+    strategy_version: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+    )
+
+
+class LiquidityLevelRecord(Base):
+    __tablename__ = "liquidity_levels"
+    __table_args__ = (
+        sa.UniqueConstraint(
+            "instrument_pk",
+            "timeframe",
+            "level_type",
+            "price_key",
+            "strategy_version",
+            name="uq_liquidity_levels_identity",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        sa.BigInteger().with_variant(sa.Integer(), "sqlite"), primary_key=True, autoincrement=True
+    )
+    instrument_pk: Mapped[int] = mapped_column(
+        sa.ForeignKey("instruments.id", ondelete="CASCADE"), nullable=False
+    )
+    timeframe: Mapped[str] = mapped_column(sa.String(8), nullable=False)
+    level_type: Mapped[str] = mapped_column(sa.String(24), nullable=False)
+    price: Mapped[Decimal] = mapped_column(PriceNumeric, nullable=False)
+    price_key: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    relevance: Mapped[Decimal | None] = mapped_column(PriceNumeric)
+    touches: Mapped[int] = mapped_column(sa.Integer, default=1)
+    is_major: Mapped[bool] = mapped_column(sa.Boolean, default=False)
+    detail: Mapped[str | None] = mapped_column(sa.Text)
+    strategy_version: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+    )
+
+
+class LiquidityEventRecord(Base):
+    __tablename__ = "liquidity_events"
+    __table_args__ = (
+        sa.UniqueConstraint(
+            "instrument_pk",
+            "timeframe",
+            "event_type",
+            "level_price_key",
+            "event_candle_open_time",
+            "strategy_version",
+            name="uq_liquidity_events_identity",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        sa.BigInteger().with_variant(sa.Integer(), "sqlite"), primary_key=True, autoincrement=True
+    )
+    instrument_pk: Mapped[int] = mapped_column(
+        sa.ForeignKey("instruments.id", ondelete="CASCADE"), nullable=False
+    )
+    timeframe: Mapped[str] = mapped_column(sa.String(8), nullable=False)
+    event_type: Mapped[str] = mapped_column(sa.String(24), nullable=False)
+    direction: Mapped[str] = mapped_column(sa.String(8), nullable=False)
+    level_price: Mapped[Decimal] = mapped_column(PriceNumeric, nullable=False)
+    level_price_key: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    event_candle_open_time: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), nullable=False
+    )
+    overshoot_bps: Mapped[Decimal | None] = mapped_column(PriceNumeric)
+    confirmed: Mapped[bool] = mapped_column(sa.Boolean, default=False)
+    confidence: Mapped[Decimal | None] = mapped_column(PriceNumeric)
+    detail: Mapped[str | None] = mapped_column(sa.Text)
+    strategy_version: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+    )
+
+
+class SetupCandidateRecord(Base):
+    """Current state of a research setup candidate (history in events)."""
+
+    __tablename__ = "setup_candidates"
+    __table_args__ = (
+        sa.Index("ix_setup_candidates_instrument_state", "instrument_pk", "state"),
+        sa.Index("ix_setup_candidates_dedupe", "dedupe_key"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True)
+    instrument_pk: Mapped[int] = mapped_column(
+        sa.ForeignKey("instruments.id", ondelete="CASCADE"), nullable=False
+    )
+    instrument_id: Mapped[int] = mapped_column(sa.BigInteger, nullable=False)
+    symbol: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    asset_class: Mapped[str] = mapped_column(sa.String(16), nullable=False)
+    candidate_type: Mapped[str] = mapped_column(sa.String(40), nullable=False, index=True)
+    direction: Mapped[str] = mapped_column(sa.String(8), nullable=False)
+    state: Mapped[str] = mapped_column(sa.String(16), nullable=False, index=True)
+    as_of: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+    expiry_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+    setup_score: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    confidence: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    primary_regime: Mapped[str] = mapped_column(sa.String(24), nullable=False)
+    regime_confidence: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    higher_timeframe_structure: Mapped[str] = mapped_column(sa.String(28), nullable=False)
+    local_structure: Mapped[str] = mapped_column(sa.String(28), nullable=False)
+    session_state: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    market_quality_score: Mapped[int | None] = mapped_column(sa.Integer)
+    data_quality_status: Mapped[str] = mapped_column(sa.String(24), nullable=False)
+    retest_status: Mapped[str] = mapped_column(sa.String(16), nullable=False)
+    reason_summary: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    details: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
+    dedupe_key: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    #: equals dedupe_key while the candidate is active (DETECTED/CONFIRMED),
+    #: NULL when terminal - unique constraint prevents duplicate actives.
+    active_key: Mapped[str | None] = mapped_column(sa.String(32), unique=True)
+    feature_snapshot_id: Mapped[uuid.UUID | None] = mapped_column(sa.Uuid)
+    strategy_name: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    strategy_version: Mapped[str] = mapped_column(sa.String(32), nullable=False, index=True)
+    feature_schema_version: Mapped[str] = mapped_column(sa.String(16), nullable=False)
+    config_hash: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    ruleset_hash: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+    )
+
+
+class SetupCandidateEvent(Base):
+    """Immutable candidate lifecycle history."""
+
+    __tablename__ = "setup_candidate_events"
+
+    id: Mapped[int] = mapped_column(
+        sa.BigInteger().with_variant(sa.Integer(), "sqlite"), primary_key=True, autoincrement=True
+    )
+    candidate_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("setup_candidates.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    event_type: Mapped[str] = mapped_column(sa.String(24), nullable=False)
+    from_state: Mapped[str | None] = mapped_column(sa.String(16))
+    to_state: Mapped[str | None] = mapped_column(sa.String(16))
+    detail: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+    )
+
+
+class SetupRejectionRecord(Base):
+    """Aggregated setup rejections (sampled/deduplicated per window)."""
+
+    __tablename__ = "setup_rejections"
+    __table_args__ = (
+        sa.UniqueConstraint(
+            "instrument_pk",
+            "primary_code",
+            "candidate_type",
+            "window_bucket",
+            "strategy_version",
+            name="uq_setup_rejections_bucket",
+        ),
+        sa.Index("ix_setup_rejections_instrument_created", "instrument_pk", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(
+        sa.BigInteger().with_variant(sa.Integer(), "sqlite"), primary_key=True, autoincrement=True
+    )
+    instrument_pk: Mapped[int] = mapped_column(
+        sa.ForeignKey("instruments.id", ondelete="CASCADE"), nullable=False
+    )
+    symbol: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    primary_code: Mapped[str] = mapped_column(sa.String(40), nullable=False, index=True)
+    candidate_type: Mapped[str] = mapped_column(sa.String(40), nullable=False, default="")
+    codes: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
+    detail: Mapped[str | None] = mapped_column(sa.Text)
+    count: Mapped[int] = mapped_column(sa.Integer, default=1, nullable=False)
+    first_as_of: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+    last_as_of: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+    window_bucket: Mapped[str] = mapped_column(sa.String(24), nullable=False)
+    strategy_version: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    config_hash: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+    )

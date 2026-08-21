@@ -108,6 +108,15 @@ async def status(request: Request) -> dict[str, Any]:
     except Exception:
         display_tz_now = None
 
+    strategy = getattr(ctx, "strategy", None)
+    strategy_status: dict[str, Any] | str
+    if strategy is not None:
+        strategy_status = await strategy.status_stats()
+    elif settings.strategy.enabled:
+        strategy_status = "enabled_not_initialized"
+    else:
+        strategy_status = "disabled"
+
     telegram_subsystem = getattr(ctx, "telegram", None)
     telegram: dict[str, Any] | str
     if telegram_subsystem is not None:
@@ -136,4 +145,5 @@ async def status(request: Request) -> dict[str, Any]:
         "display_time": display_tz_now,
         "market_selection": selection_status,
         "watchlist": watchlist,
+        "strategy": strategy_status,
     }

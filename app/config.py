@@ -458,6 +458,153 @@ class SelectionThresholdSettings(_EnvSettings):
     )
 
 
+class StrategySettings(_EnvSettings):
+    """Strategy research foundation configuration (phase 8).
+
+    Conservative defaults; invalid values (weight sums, percentiles,
+    timeframe sets) fail loudly at startup - never a silently relaxed rule.
+    The full model feeds the deterministic configuration hash.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="STRATEGY_", env_file=str(ENV_FILE), extra="ignore"
+    )
+
+    enabled: bool = True
+    name: str = "market_structure_v1"
+    version: str = "1.0.0"
+    evaluation_refresh_seconds: float = 20.0
+    max_concurrent_evaluations: int = 4
+    require_active_watchlist: bool = True
+    require_healthy_data: bool = True
+    allow_degraded_data: bool = False
+    require_fresh_orderbook: bool = True
+    min_setup_score: int = 75
+    candidate_dedupe_seconds: float = 1800.0
+    #: identical rejection (instrument+code) is aggregated within this window.
+    rejection_persist_seconds: float = 300.0
+    max_active_candidates_per_instrument: int = 2
+    #: candidate evaluation expiry: N closed 5m candles without confirmation.
+    expire_after_5m_candles: int = 6
+    persist_feature_snapshots: bool = True
+    feature_retention_days: int = 14
+
+    # --- candle requirements ---------------------------------------------
+    required_timeframes: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["5m", "15m", "1h"]
+    )
+    min_candles_1m: int = 60
+    min_candles_5m: int = 60
+    min_candles_15m: int = 40
+    min_candles_1h: int = 30
+    #: consecutive candle spacing beyond tf * multiplier counts as a gap.
+    max_candle_gap_multiplier: float = 1.5
+    allow_1m_optional: bool = True
+
+    # --- structure / liquidity -------------------------------------------
+    swing_left_bars: int = 2
+    swing_right_bars: int = 2
+    swing_atr_multiplier: float = 0.5
+    equal_level_tolerance_bps: float = 5.0
+    structure_break_confirmation_closes: int = 1
+    liquidity_level_lookback: int = 50
+    sweep_min_overshoot_bps: float = 3.0
+    reclaim_tolerance_bps: float = 2.0
+    retest_tolerance_bps: float = 10.0
+    retest_max_5m_candles: int = 12
+
+    # --- volatility / momentum / volume ----------------------------------
+    atr_period: int = 14
+    volatility_lookback: int = 100
+    high_volatility_percentile: float = 90.0
+    momentum_lookback: int = 10
+    volume_lookback: int = 20
+    min_relative_volume: float = 1.2
+    require_volume_confirmation: bool = False
+    require_momentum_confirmation: bool = True
+
+    # --- scoring / regime / overrides -------------------------------------
+    #: weights must sum to exactly 100.
+    score_weights_json: dict[str, int] = Field(
+        default_factory=lambda: {
+            "htf_bias": 20,
+            "structure_15m": 20,
+            "liquidity_event": 15,
+            "local_confirmation_5m": 15,
+            "momentum": 10,
+            "volume": 10,
+            "market_context": 5,
+            "volatility_fit": 5,
+        }
+    )
+    regime_rules_json: dict[str, float] = Field(
+        default_factory=lambda: {
+            "trend_efficiency_ratio_min": 0.35,
+            "range_efficiency_ratio_max": 0.2,
+            "breakout_lookback": 20,
+            "trend_lookback": 30,
+            "low_liquidity_quality_below": 60.0,
+        }
+    )
+    symbol_overrides_json: dict[str, dict[str, float | bool | int]] = Field(default_factory=dict)
+    event_risk_enabled: bool = False
+    #: UTC windows [{"start": "2026-09-17T17:00:00Z", "end": "...", "label": "FOMC"}]
+    event_risk_windows_json: list[dict[str, str]] = Field(default_factory=list)
+
+    @field_validator("required_timeframes", mode="before")
+    @classmethod
+    def _parse_timeframes(cls, value: object) -> object:
+        return _split_csv(value)
+
+    @field_validator("required_timeframes")
+    @classmethod
+    def _validate_timeframes(cls, value: list[str]) -> list[str]:
+        valid = {"1m", "5m", "15m", "1h"}
+        unknown = set(value) - valid
+        if unknown:
+            raise ValueError(f"invalid timeframes: {sorted(unknown)}")
+        for mandatory in ("5m", "15m", "1h"):
+            if mandatory not in value:
+                raise ValueError(f"timeframe {mandatory} is mandatory for candidates")
+        return value
+
+    @field_validator("score_weights_json")
+    @classmethod
+    def _validate_weights(cls, value: dict[str, int]) -> dict[str, int]:
+        expected = {
+            "htf_bias",
+            "structure_15m",
+            "liquidity_event",
+            "local_confirmation_5m",
+            "momentum",
+            "volume",
+            "market_context",
+            "volatility_fit",
+        }
+        if set(value) != expected:
+            raise ValueError(f"score weights must define exactly {sorted(expected)}")
+        total = sum(value.values())
+        if total != 100:
+            raise ValueError(f"score weights must sum to 100, got {total}")
+        if any(weight < 0 for weight in value.values()):
+            raise ValueError("score weights must be non-negative")
+        return value
+
+    @field_validator("high_volatility_percentile")
+    @classmethod
+    def _validate_percentile(cls, value: float) -> float:
+        if not 50.0 <= value <= 100.0:
+            raise ValueError("high_volatility_percentile must be within 50..100")
+        return value
+
+    @field_validator("min_setup_score")
+    @classmethod
+    def _validate_min_score(cls, value: int) -> int:
+        if not 0 <= value <= 100:
+            raise ValueError("min_setup_score must be within 0..100")
+        return value
+
+
 class Settings(BaseModel):
     """Aggregated, fully typed application configuration."""
 
@@ -475,6 +622,7 @@ class Settings(BaseModel):
     equity_sessions: EquitySessionSettings = Field(default_factory=EquitySessionSettings)
     crypto_sessions: CryptoSessionSettings = Field(default_factory=CryptoSessionSettings)
     thresholds: SelectionThresholdSettings = Field(default_factory=SelectionThresholdSettings)
+    strategy: StrategySettings = Field(default_factory=StrategySettings)
 
 
 @lru_cache(maxsize=1)

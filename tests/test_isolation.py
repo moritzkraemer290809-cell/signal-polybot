@@ -169,9 +169,11 @@ def test_telegram_layer_imports_no_strategy_or_market_adapters() -> None:
 
 
 def test_phase6_generates_no_trade_signals() -> None:
-    """Strategy/risk/cost modules must still be pure placeholders: nothing in
-    the codebase computes long/short signals, entries, stops or leverage."""
-    for package in ("strategy", "risk", "costs"):
+    """Risk/cost modules must still be pure placeholders: nothing in the
+    codebase computes entries, stops, targets, leverage, sizes or costs.
+    (The phase-8 strategy package produces research candidates only - its own
+    isolation is enforced in test_strategy_isolation below.)"""
+    for package in ("risk", "costs"):
         for path in sorted((APP_DIR / package).rglob("*.py")):
             if path.name == "__init__.py":
                 continue
@@ -226,3 +228,50 @@ def test_selection_layer_contains_no_trading_terminology() -> None:
             source = path.read_text()
             for term in forbidden_terms:
                 assert term not in source, f"{path} contains trading term {term!r}"
+
+
+def test_strategy_layer_isolation_and_no_trade_parameters() -> None:
+    """Phase-8 strategy modules: no Telegram/risk/cost/trading imports, no
+    network clients, and no trade-parameter terminology (entry/stop/target/
+    leverage/position size) anywhere in the research core."""
+    forbidden_imports = (
+        "app.telegram",
+        "app.adapters.telegram",
+        "app.risk",
+        "app.costs",
+        "app.monitoring",
+        "app.adapters.polymarket_rest",
+        "app.adapters.polymarket_ws",
+        "httpx",
+        "websockets",
+        "aiogram",
+    )
+    forbidden_terms = (
+        "entry_price",
+        "stop_loss",
+        "stop_price",
+        "take_profit",
+        "leverage",
+        "position_size",
+        "order_size",
+        "notional_size",
+    )
+    strategy_files = sorted((APP_DIR / "strategy").rglob("*.py"))
+    assert len(strategy_files) > 15
+    for path in strategy_files:
+        source = path.read_text()
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            modules: list[str] = []
+            if isinstance(node, ast.Import):
+                modules = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                modules = [node.module]
+            for module in modules:
+                for prefix in forbidden_imports:
+                    assert not module.startswith(prefix), (
+                        f"{path} imports {module!r} - strategy isolation violated"
+                    )
+        lowered = source.lower()
+        for term in forbidden_terms:
+            assert term not in lowered, f"{path} contains trade parameter term {term!r}"

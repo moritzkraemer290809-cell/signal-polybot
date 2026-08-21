@@ -74,6 +74,28 @@
 - Denylist schlaegt Allowlist; die Allowlist kann weder Session- noch
   Datenqualitaets- noch Policy-Blockaden umgehen.
 
+## Strategy-Research-Layer (Phase 8)
+
+- Phase 8 erzeugt ausschliesslich interne Research-Artefakte: **keine
+  Trade-Signale, keine Telegram-Ausgabe** und keinerlei
+  Entry-/Stop-/Target-/Hebel-/Positionsgroessen- oder Kostenwerte -
+  weder in Feldern noch in Logs noch in API-Ausgaben. Ein AST-basierter
+  Isolationstest verbietet dem Strategie-Layer zusaetzlich Importe von
+  Telegram-, Risiko-, Kosten- und Netzwerk-Modulen (httpx/websockets).
+- Alle Strategie-Eingaben sind oeffentliche Marktdaten aus der eigenen
+  Persistenz/dem Cache; der Strategiepfad macht keine REST- oder
+  WS-Aufrufe.
+- Richtungswerte (`BULLISH`/`BEARISH`) sind Strukturklassifikationen und
+  werden in der API explizit als "research classification" gekennzeichnet;
+  jede Dashboard-Ausgabe traegt den Disclaimer "Research-Ausgabe. Kein
+  Trade-Signal. Keine Renditeprognose.".
+- Kein LLM und keine Heuristik ausserhalb der versionierten, deterministischen
+  Regeln entscheidet ueber Kandidaten; jede Entscheidung ist ueber
+  `strategy_version`, `config_hash`, `ruleset_hash` und die persistierten
+  Candle-Fenster reproduzierbar.
+- API-Sektionen des Strategie-Layers geben weder Secrets noch Konfigurations-
+  Rohwerte aus (nur Name, Version, Hashes, Zaehler, Research-Felder).
+
 ## Betriebssicherheit
 
 - Gewichteter Rate Limiter unterhalb des dokumentierten Polymarket-Budgets.

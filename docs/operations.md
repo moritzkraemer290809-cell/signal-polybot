@@ -107,6 +107,37 @@ Korrelations-IDs werden pro Signal-Lifecycle gebunden (ab Phase 10 durchgaengig)
 - Globaler PAUSED-Modus: Data Engine und Selection laufen weiter, nur
   optionale Selektionsmeldungen entfallen.
 
+## Strategy Research (Phase 8)
+
+- Zustand: `/health` -> `strategy` (Subsystem-State HEALTHY/DEGRADED/
+  UNAVAILABLE/DISABLED, Job-Liveness, aktive Kandidaten, Evaluations-
+  zaehler); `/status` -> Strategiename/-version, `config_hash`, letzter
+  Run, Regime/Struktur/letzte Rejection-Codes pro Instrument; `/dashboard`
+  -> Kandidaten nach Zustand, letzte Kandidaten mit Score und Begruendung,
+  aggregierte Ablehnungen. Alle Ausgaben tragen den Research-Disclaimer -
+  es sind keine Trade-Signale.
+- `STRATEGY_ENABLED=false` deaktiviert das Subsystem vollstaendig (App,
+  Feed und Selektion laufen normal weiter).
+- Der Job bewertet nur ACTIVE-Watchlist-Instrumente und nur, wenn eine neue
+  geschlossene 5m-Candle vorliegt; `skipped_no_new_candle` im
+  `/status`-Run-Summary ist daher normal.
+- Keine Kandidaten? `/dashboard` -> `strategy.recent_rejections` zeigt die
+  strukturierten Codes (z. B. `SETUP_SCORE_BELOW_THRESHOLD`,
+  `MOMENTUM_INSUFFICIENT`, `REGIME_*`). `NO_TRADE`/leer ist ein korrektes
+  Ergebnis, kein Fehler.
+- Parameteraenderungen (Score-Gewichte, Schwellen, Regime-Regeln) aendern
+  den `config_hash`; fuer nachvollziehbare Historie zusaetzlich
+  `STRATEGY_VERSION` anheben. Ungueltige Konfiguration (Gewichtssumme
+  != 100, fehlende Pflicht-Timeframes) verhindert den Start.
+- Globaler PAUSED-Modus (`/pause`): keine neuen Kandidaten, bestehende
+  expiren regulaer; Datenerfassung und Bewertungs-Skips laufen weiter.
+- DB-Ausfall: `strategy`-Subsystem meldet DEGRADED,
+  `strategy.persistence_failures` steigt; unpersistierte Kandidaten werden
+  nie als erfolgreich gemeldet. Prozess laeuft weiter.
+- Retention: Feature-Snapshots werden nach
+  `STRATEGY_FEATURE_RETENTION_DAYS` (Default 14) aufgeraeumt; Kandidaten,
+  Events und Rejections bleiben als Research-Historie erhalten.
+
 ## Backup & Recovery
 
 Persistente Daten liegen in den Volumes `polysignal_pgdata` und

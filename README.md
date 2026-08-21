@@ -22,7 +22,8 @@ in eine private Telegram-Gruppe. **Der Nutzer handelt manuell.**
 | 5 | WebSocket Data Layer, Orderbuch, Cache/Freshness, Data Quality | ✅ |
 | 6 | Telegram Delivery Service, persistente Queue, Admin-Kommandos | ✅ |
 | 7 | Market Selection Engine, Session Manager, Kalender, Watchlist | ✅ |
-| 8+ | Strategie, Risiko/Kosten, Lifecycle, Shadow Mode, Backtests | ⏳ geplant |
+| 8 | Strategy Research Foundation: Marktstruktur, Features, Regime, Setup-Kandidaten (nur Research, keine Signale) | ✅ |
+| 9+ | Risiko/Kosten, Signal-Lifecycle, Shadow Mode, Backtests | ⏳ geplant |
 
 ## Architekturüberblick
 
@@ -36,7 +37,7 @@ flowchart LR
     subgraph app["polysignal-intelligence"]
         ADP["Adapters<br/>(REST-Client, Rate Limiter)"]
         DATA["Data Layer<br/>(Instrument Discovery, Cache)"]
-        STRAT["Strategy / Risk / Costs<br/>(Phase 8-9)"]
+        STRAT["Strategy Research<br/>(Phase 8: Kandidaten, kein Signal)"]
         MON["Signal Lifecycle & Monitoring<br/>(Phase 10)"]
         API["FastAPI<br/>/health /status /dashboard"]
     end
@@ -118,8 +119,8 @@ uv run mypy                  # Typen
 Alle Parameter, Schwellenwerte und Secrets kommen aus `.env` /
 Environment-Variablen und sind in [`app/config.py`](app/config.py) typisiert.
 Wichtige Gruppen: `APP_*`, `DATABASE_*`, `REDIS_*`, `POLYMARKET_*`,
-`TELEGRAM_*`, `UNIVERSE_*`, `DATA_QUALITY_*` — siehe kommentierte
-[`.env.example`](.env.example).
+`TELEGRAM_*`, `UNIVERSE_*`, `DATA_QUALITY_*`, `MARKET_SELECTION_*`,
+`STRATEGY_*` — siehe kommentierte [`.env.example`](.env.example).
 
 Marktuniversum V1: `AAPL-PERP` (Equity) und `BTC-PERP` (Crypto); weitere Märkte
 nur per Konfiguration. Instrument-IDs werden **nie** fest codiert, sondern per
@@ -131,7 +132,7 @@ Discovery über `/v1/info/instruments` aufgelöst.
 |----------|-------|
 | `GET /health` | Prozess, PostgreSQL, Redis, Telegram-Konfig, WebSocket-Liveness/Subscriptions, kritische Channel-Frische, Anzahl `DATA_STALE`-Assets |
 | `GET /status` | Botzustand (inkl. Kill Switch), Universum, Connection State, Reconnects, invalide Events, Datenqualität pro Instrument, Orderbuch-Resyncs, Buffer-Statistiken |
-| `GET /dashboard` | Kompakte JSON-Übersicht + Metriken + Datenqualität |
+| `GET /dashboard` | Kompakte JSON-Übersicht + Metriken + Datenqualität + Strategy-Research-Sektion (Kandidaten/Ablehnungen, mit Disclaimer) |
 
 Ein DB-/Redis-Ausfall degradiert `/health` (503) bzw. liefert `database:
 "unavailable"` in `/status` - der Prozess und der Marktdaten-Feed laufen weiter.
@@ -149,6 +150,29 @@ Ein DB-/Redis-Ausfall degradiert `/health` (503) bzw. liefert `database:
   (keine Trade-Ideen); Allowlist/Denylist, max. Groesse, Priorisierung nach
   Quality Score, Events (ADDED/PAUSED/RESTORED/REMOVED) und unveraenderliche
   Entscheidungs-Historie. Details: `docs/architecture.md`, `docs/strategy.md`.
+
+## Strategy Research (Phase 8)
+
+> **Research-Ausgabe. Kein Trade-Signal. Keine Renditeprognose.**
+
+- Deterministische, versionierte Analysepipeline auf ACTIVE-Watchlist-
+  Instrumenten: Multi-Timeframe (1h Regime/Bias → 15m Struktur → 5m
+  Bestaetigung), ausschliesslich **geschlossene** Candles (Anti-Look-Ahead),
+  keine Interpolation, keine REST-Calls im Strategiepfad.
+- Marktstruktur (Swings, HH/HL/LH/LL, BOS/ChoCh nur Close-bestaetigt),
+  Liquiditaets-Pools und candle-approximierte Sweeps, Reclaim/Rejection/
+  Retest, Volatilitaets-/Momentum-/Volumen-/Orderbuch-Features.
+- Genau ein Regime pro Bewertung (TREND_UP/DOWN, RANGE, BREAKOUT,
+  HIGH_VOLATILITY, LOW_LIQUIDITY, EVENT_RISK, NO_TRADE, INSUFFICIENT_DATA)
+  mit Konfidenz und Gruenden; `NO_TRADE` ist ein gueltiges Ergebnis.
+- Sechs Setup-Kandidaten-Klassen mit Score 0-100 (konfigurierbare Gewichte,
+  Mindestscore 75) und vollstaendiger Score-Zerlegung; Kandidaten sind
+  interne Research-Objekte ohne jegliche Trade-Parameter (testseitig
+  erzwungen). Lifecycle: DETECTED → CONFIRMED → REJECTED/EXPIRED/SUPERSEDED
+  mit unveraenderlicher Event-Historie und Race-sicherem Dedupe.
+- Ablehnungen werden mit strukturierten Codes aggregiert persistiert;
+  jede Entscheidung ist ueber Strategieversion, Config-Hash und
+  Candle-Fenster reproduzierbar. Details: [`docs/strategy.md`](docs/strategy.md).
 
 ## Telegram (Phase 6)
 

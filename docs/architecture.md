@@ -10,7 +10,7 @@ app/
 ├── domain/          # Enums, Value Objects, Lifecycle-Definition – persistenz- und I/O-frei
 ├── data/            # Instrument Discovery, Market Cache (Redis), spaeter Candle/Orderbook-Services
 ├── repositories/    # SQLAlchemy ORM + Repositories (einzige DB-Zugriffsschicht)
-├── strategy/        # Phase 8 – regelbasierte Setups (kein LLM-Einfluss auf Entscheidungen)
+├── strategy/        # Phase 8 – regelbasierte Research-Engine: purer Kern (Features/Regime/Regeln/Score) + Context-Builder/Feature-Store als Adapter; kein LLM-Einfluss
 ├── costs/ risk/     # Phase 9 – identisch fuer Live/Shadow/Backtest
 ├── monitoring/      # Phase 7/10 – Sessions, Signal-Lifecycle
 ├── jobs/            # periodische Tasks (Universe Refresh aktiv; weitere folgen)
@@ -340,3 +340,51 @@ REST-Last pro Bewertung. Session-Transitionen werden erkannt, persistiert
 (`session_events`) und optional (Default aus) via Delivery Queue gemeldet;
 im globalen PAUSED-Modus laeuft die technische Aktualisierung weiter, nur
 optionale Meldungen entfallen.
+
+## Strategy Research Foundation (Phase 8)
+
+Erzeugt ausschliesslich interne Research-Artefakte (`SetupCandidate` /
+`SetupRejection`) - keine Trade-Signale, keine Telegram-Ausgabe, keine
+Entry/Stop/Target/Hebel/Positionsgroessen/Kosten (AST-Isolationstest).
+Fachliche Details: [`docs/strategy.md`](strategy.md).
+
+```mermaid
+flowchart LR
+    WL2["Watchlist ACTIVE<br/>(Phase 7)"]
+    JOB["StrategyEvaluationJob<br/>20s · Overlap-Lock ·<br/>nur neue 5m-Closes"]
+    CTX["EvaluationContextBuilder<br/>DB-Candles + Cache-Snapshots<br/>CandleSeries.build = Anti-Look-Ahead"]
+    ENG["evaluate_context (pur)<br/>Gates → Features → Regime →<br/>Regeln → Score"]
+    FS["FeatureStore<br/>Snapshots · Swings ·<br/>Events · Regime-Historie"]
+    CM["Candidate Admission<br/>Dedupe (active_key) · Upgrade ·<br/>Supersede · Expiry"]
+    DB3[("feature_snapshots · swing_points ·<br/>structure_events · liquidity_* ·<br/>setup_candidates(+events) ·<br/>setup_rejections · market_regimes")]
+    API3["/health · /status · /dashboard<br/>(mit Research-Disclaimer)"]
+
+    WL2 --> JOB --> CTX --> ENG
+    ENG --> FS --> DB3
+    ENG --> CM --> DB3
+    JOB --> API3
+```
+
+Kernentscheidungen:
+
+- **Purer Kern**: `evaluate_context` arbeitet ohne I/O auf einem immutablen
+  `EvaluationContext`; Adapter (Context-Builder, Feature-Store, Job) liegen
+  aussen herum. Dieselben Eingaben liefern deterministisch dieselben
+  Ergebnisse (getestet).
+- **Anti-Look-Ahead** zentral in `CandleSeries.build()`: nur geschlossene
+  Candles, Gap-/Staleness-Checks, keine Interpolation.
+- **Idempotenz via DB-Constraints**: Swings/Struktur-/Liquiditaetsevents
+  haben Unique-Identitaeten (Insert-ignoring-duplicates); der
+  `active_key`-Unique auf `setup_candidates` verhindert doppelte aktive
+  Kandidaten auch unter Races; Rejections aggregieren pro Zeitfenster-Bucket.
+- **Kein REST im Strategiepfad**: Candles aus PostgreSQL (Phase 5),
+  Marktkontext aus den In-Memory-Trackern/Buechern.
+
+### Persistenz (Alembic `0004`)
+
+8 neue Tabellen: `feature_snapshots`, `swing_points`, `structure_events`,
+`liquidity_levels`, `liquidity_events`, `setup_candidates`,
+`setup_candidate_events`, `setup_rejections`. Alle Zeilen tragen
+`strategy_version` (+ `config_hash` wo relevant); `setup_candidate_events`
+ist die unveraenderliche Lifecycle-Historie. Snapshot-Retention:
+`STRATEGY_FEATURE_RETENTION_DAYS`.

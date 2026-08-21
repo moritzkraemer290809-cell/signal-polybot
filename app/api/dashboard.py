@@ -51,11 +51,16 @@ async def dashboard(request: Request) -> dict[str, Any]:
     selection_dashboard: dict[str, Any] | None = None
     if selection is not None:
         selection_dashboard = await selection.dashboard_details()
+    strategy = getattr(ctx, "strategy", None)
+    strategy_dashboard: dict[str, Any] | None = None
+    if strategy is not None:
+        strategy_dashboard = await strategy.dashboard_details()
     return {
         "enabled_markets": enabled_markets,
         "open_signals": open_signals,
         "data_quality": data_quality.summary() if data_quality is not None else None,
         "telegram_deliveries": deliveries,
         "market_selection": selection_dashboard,
+        "strategy": strategy_dashboard,
         "metrics": metrics.snapshot(),
     }

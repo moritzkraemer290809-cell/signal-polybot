@@ -29,19 +29,24 @@ from app.domain.enums import (
     WsConnectionState,
 )
 from app.domain.models import CandleData, FundingRateData, TickerData
+from app.jobs.strategy_evaluation_refresh import StrategyEvaluationJob
 from app.jobs.universe_refresh import UniverseRefreshJob
 from app.observability.logging import configure_logging, get_logger
 from app.repositories.app_state_repository import AppStateRepository
 from app.repositories.candle_repository import CandleRepository
 from app.repositories.database import Database
 from app.repositories.decision_repository import DecisionRepository
+from app.repositories.feature_repository import FeatureRepository
 from app.repositories.funding_repository import FundingRateRepository
 from app.repositories.instrument_repository import InstrumentRepository
 from app.repositories.market_selection_repository import MarketSelectionRepository
 from app.repositories.market_tick_repository import MarketTickRepository
 from app.repositories.orderbook_repository import OrderbookSnapshotRepository
+from app.repositories.regime_repository import RegimeRepository
 from app.repositories.session_event_repository import SessionEventRepository
+from app.repositories.setup_candidate_repository import SetupCandidateRepository
 from app.repositories.signal_repository import SignalRepository
+from app.repositories.strategy_decision_repository import StrategyDecisionRepository
 from app.repositories.system_event_repository import SystemEventRepository
 from app.repositories.telegram_delivery_repository import TelegramDeliveryRepository
 from app.repositories.watchlist_repository import WatchlistRepository
@@ -54,6 +59,8 @@ from app.sessions.early_close_provider import StaticUsEquityEarlyCloseProvider
 from app.sessions.equity_calendar import EquityCalendar
 from app.sessions.holiday_provider import StaticUsEquityHolidayProvider
 from app.sessions.session_manager import CryptoSessionManager, EquitySessionManager
+from app.strategy.evaluation_context import EvaluationContextBuilder
+from app.strategy.feature_store import FeatureStore
 from app.telegram.authorization import TelegramAuthorizer
 from app.telegram.client import HttpTelegramClient
 from app.telegram.command_router import CommandProviders, TelegramCommandRouter
@@ -93,6 +100,7 @@ class AppContext:
     equity_sessions: EquitySessionManager | None = None
     crypto_sessions: CryptoSessionManager | None = None
     selection: MarketSelectionCoordinator | None = None
+    strategy: StrategyEvaluationJob | None = None
     start_correlation_id: str = ""
     started_at: datetime = field(default_factory=lambda: datetime.now(tz=UTC))
     extra: dict[str, Any] = field(default_factory=dict)
@@ -101,6 +109,8 @@ class AppContext:
         log = get_logger("bootstrap")
         if self.universe_job is not None:
             await self.universe_job.stop()
+        if self.strategy is not None:
+            await self.strategy.stop()
         if self.selection is not None:
             await self.selection.stop()
         if self.market_data is not None:
@@ -438,6 +448,8 @@ async def build_context(settings: Settings) -> AppContext:
             ctx_after = ctx_holder.get("ctx")
             if ctx_after is not None and ctx_after.selection is not None:
                 ctx_after.selection.trigger()
+            if ctx_after is not None and ctx_after.strategy is not None:
+                ctx_after.strategy.trigger()
 
         on_refresh = _sync_after_refresh
         await ws_client.start()
@@ -486,6 +498,30 @@ async def build_context(settings: Settings) -> AppContext:
         )
         await selection.start()
 
+    strategy_job: StrategyEvaluationJob | None = None
+    if settings.strategy.enabled:
+        candle_repo = CandleRepository(db.session_factory)
+        context_builder = EvaluationContextBuilder(
+            settings.strategy, candle_repo, market_data, data_quality, books
+        )
+        feature_store = FeatureStore(
+            FeatureRepository(db.session_factory),
+            RegimeRepository(db.session_factory),
+            settings.strategy,
+        )
+        strategy_job = StrategyEvaluationJob(
+            settings.strategy,
+            context_builder,
+            feature_store,
+            SetupCandidateRepository(db.session_factory),
+            StrategyDecisionRepository(db.session_factory),
+            candle_repo,
+            instrument_repo,
+            selection,
+            bot_state,
+        )
+        await strategy_job.start()
+
     universe_job: UniverseRefreshJob | None = None
     if settings.universe.refresh_enabled:
         universe_job = UniverseRefreshJob(instrument_service, settings.universe, on_refresh)
@@ -520,6 +556,7 @@ async def build_context(settings: Settings) -> AppContext:
         equity_sessions=equity_sessions,
         crypto_sessions=crypto_sessions,
         selection=selection,
+        strategy=strategy_job,
         start_correlation_id=start_correlation_id,
     )
     ctx_holder["ctx"] = ctx

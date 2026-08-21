@@ -260,6 +260,14 @@ class MarketSelectionCoordinator:
             "last_run_at": self.last_run_at.isoformat() if self.last_run_at else None,
         }
 
+    async def active_watchlist_rows(self) -> list[Any]:
+        """Raw active-watchlist rows for downstream research phases."""
+        try:
+            rows = await self._watchlist.repository.load_all()
+        except Exception:
+            return []
+        return [row for row in rows if row.state == "WATCHLIST_ACTIVE"]
+
     async def watchlist_details(self) -> dict[str, Any] | None:
         """Active/paused watchlist rows for the status endpoint (no direction)."""
         try:
