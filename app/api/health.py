@@ -17,7 +17,13 @@ async def health(request: Request, response: Response) -> dict[str, Any]:
     db_ok = await ctx.db.ping()
     redis_ok = await ctx.cache.ping()
 
-    telegram_status = "configured" if ctx.settings.telegram.configured else "not_configured"
+    telegram_subsystem = getattr(ctx, "telegram", None)
+    if telegram_subsystem is not None:
+        telegram_status: dict[str, Any] | str = await telegram_subsystem.health_stats()
+    elif ctx.settings.telegram.enabled:
+        telegram_status = "enabled_not_initialized"
+    else:
+        telegram_status = "disabled"
     last_refresh = ctx.instrument_service.last_refresh_at
 
     ws_client = getattr(ctx, "ws_client", None)

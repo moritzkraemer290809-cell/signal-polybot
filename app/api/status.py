@@ -18,7 +18,14 @@ async def status(request: Request) -> dict[str, Any]:
     ctx = request.app.state.ctx
     settings = ctx.settings
 
-    bot_state = BotState.PAUSED if settings.app.kill_switch else BotState.RUNNING
+    bot_state_service = getattr(ctx, "bot_state", None)
+    paused = settings.app.kill_switch
+    if bot_state_service is not None:
+        try:
+            paused = await bot_state_service.is_paused()
+        except Exception:
+            paused = settings.app.kill_switch
+    bot_state = BotState.PAUSED if paused else BotState.RUNNING
 
     # a database outage must degrade the response, never crash the endpoint
     database = "ok"
@@ -82,6 +89,15 @@ async def status(request: Request) -> dict[str, Any]:
     if data_quality is not None:
         quality = data_quality.summary()
 
+    telegram_subsystem = getattr(ctx, "telegram", None)
+    telegram: dict[str, Any] | str
+    if telegram_subsystem is not None:
+        telegram = await telegram_subsystem.status_stats()
+    elif settings.telegram.enabled:
+        telegram = "enabled_not_initialized"
+    else:
+        telegram = "disabled"
+
     return {
         "bot_state": bot_state.value,
         "database": database,
@@ -97,4 +113,5 @@ async def status(request: Request) -> dict[str, Any]:
         "websocket": websocket,
         "market_data": market,
         "data_quality": quality,
+        "telegram": telegram,
     }

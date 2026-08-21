@@ -116,3 +116,37 @@ def test_data_quality_outlier_env_alias(monkeypatch) -> None:
     quality = DataQualitySettings(_env_file=None)
     assert quality.outlier_max_deviation_bps == 750
     assert quality.invalid_event_threshold == 5
+
+
+def test_telegram_phase6_settings_env_names(monkeypatch) -> None:
+    monkeypatch.setenv("TELEGRAM_ENABLED", "true")
+    monkeypatch.setenv("TELEGRAM_COMMANDS_ENABLED", "false")
+    monkeypatch.setenv("TELEGRAM_POLLING_TIMEOUT_SECONDS", "10")
+    monkeypatch.setenv("TELEGRAM_DELIVERY_QUEUE_SIZE", "50")
+    monkeypatch.setenv("TELEGRAM_DELIVERY_BATCH_SIZE", "5")
+    monkeypatch.setenv("TELEGRAM_MAX_RETRY_ATTEMPTS", "2")
+    monkeypatch.setenv("TELEGRAM_GROUP_MESSAGES_PER_MINUTE", "10")
+    monkeypatch.setenv("TELEGRAM_GROUP_MIN_INTERVAL_SECONDS", "2.5")
+    monkeypatch.setenv("TELEGRAM_EDIT_MIN_INTERVAL_SECONDS", "4")
+    monkeypatch.setenv("TELEGRAM_DEDUPLICATION_WINDOW_SECONDS", "120")
+    monkeypatch.setenv("TELEGRAM_SYSTEM_ALERTS_ENABLED", "false")
+    monkeypatch.setenv("TELEGRAM_STATUS_COMMAND_COOLDOWN_SECONDS", "30")
+    monkeypatch.setenv("TELEGRAM_ADMIN_COMMAND_AUDIT_ENABLED", "false")
+    tg = TelegramSettings(_env_file=None)
+    assert tg.enabled is True
+    assert tg.commands_enabled is False
+    assert tg.polling_timeout_seconds == 10
+    assert tg.delivery_queue_size == 50
+    assert tg.delivery_batch_size == 5
+    assert tg.max_retry_attempts == 2
+    assert tg.group_messages_per_minute == 10
+    assert tg.group_min_interval_seconds == 2.5
+    assert tg.edit_min_interval_seconds == 4
+    assert tg.deduplication_window_seconds == 120
+    assert tg.system_alerts_enabled is False
+    assert tg.status_command_cooldown_seconds == 30
+    assert tg.admin_command_audit_enabled is False
+
+
+def test_telegram_enabled_is_safe_default() -> None:
+    assert TelegramSettings(_env_file=None).enabled is False

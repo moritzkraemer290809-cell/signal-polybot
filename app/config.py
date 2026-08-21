@@ -179,13 +179,47 @@ class DataFreshnessSettings(_EnvSettings):
 
 
 class TelegramSettings(_EnvSettings):
+    """Telegram delivery + admin command configuration.
+
+    ``enabled=False`` is the safe default: the app starts without any Telegram
+    client or polling.  With ``enabled=True`` but missing/invalid token or
+    group id, the Telegram subsystem reports DEGRADED while the data engine
+    keeps running.
+    """
+
     model_config = SettingsConfigDict(
         env_prefix="TELEGRAM_", env_file=str(ENV_FILE), extra="ignore"
     )
 
+    enabled: bool = False
     bot_token: SecretStr | None = None
     group_id: int | None = None
     admin_user_ids: Annotated[list[int], NoDecode] = Field(default_factory=list)
+    #: message formatting; HTML is the supported default (escaping handled).
+    parse_mode: Literal["HTML"] = "HTML"
+    commands_enabled: bool = True
+    api_base_url: str = "https://api.telegram.org"
+    polling_timeout_seconds: float = 25.0
+    #: max open deliveries (PENDING/RETRYING/PROCESSING) before backpressure.
+    delivery_queue_size: int = 500
+    delivery_batch_size: int = 10
+    #: idle worker wake interval; new deliveries also wake the worker directly.
+    delivery_flush_seconds: float = 1.0
+    #: lease for PROCESSING rows; expired leases are reclaimed on next claim.
+    delivery_lease_seconds: float = 60.0
+    max_retry_attempts: int = 5
+    retry_min_seconds: float = 1.0
+    retry_max_seconds: float = 60.0
+    retry_jitter_seconds: float = 1.0
+    #: conservative send budget per group chat (Telegram allows ~20/min).
+    group_messages_per_minute: int = 18
+    group_min_interval_seconds: float = 1.5
+    edit_min_interval_seconds: float = 3.0
+    #: identical content within this window is skipped as duplicate.
+    deduplication_window_seconds: float = 300.0
+    system_alerts_enabled: bool = True
+    status_command_cooldown_seconds: float = 15.0
+    admin_command_audit_enabled: bool = True
 
     @field_validator("bot_token", "group_id", mode="before")
     @classmethod

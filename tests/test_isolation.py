@@ -30,7 +30,6 @@ DECLARED_IMPORTS = {
     "pydantic",
     "pydantic_settings",
     "redis",
-    "aiogram",
     "structlog",
     "greenlet",
 }
@@ -135,3 +134,54 @@ def test_phase5_data_layer_produces_no_signals_or_telegram() -> None:
                     assert not module.startswith(prefix), (
                         f"{path} imports {module!r} - phase 5 must stay signal-free"
                     )
+
+
+def test_telegram_layer_imports_no_strategy_or_market_adapters() -> None:
+    """The Telegram layer is a pure communication channel - it must not import
+    strategy/risk/cost/monitoring code or the Polymarket market-data adapters."""
+    forbidden_prefixes = (
+        "app.strategy",
+        "app.risk",
+        "app.costs",
+        "app.monitoring",
+        "app.adapters.polymarket_rest",
+        "app.adapters.polymarket_ws",
+    )
+    telegram_files = [
+        *sorted((APP_DIR / "telegram").rglob("*.py")),
+        APP_DIR / "adapters" / "telegram.py",
+        APP_DIR / "bot_state.py",
+    ]
+    assert len(telegram_files) > 5
+    for path in telegram_files:
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            modules: list[str] = []
+            if isinstance(node, ast.Import):
+                modules = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                modules = [node.module]
+            for module in modules:
+                for prefix in forbidden_prefixes:
+                    assert not module.startswith(prefix), (
+                        f"{path} imports {module!r} - telegram layer must stay isolated"
+                    )
+
+
+def test_phase6_generates_no_trade_signals() -> None:
+    """Strategy/risk/cost modules must still be pure placeholders: nothing in
+    the codebase computes long/short signals, entries, stops or leverage."""
+    for package in ("strategy", "risk", "costs"):
+        for path in sorted((APP_DIR / package).rglob("*.py")):
+            if path.name == "__init__.py":
+                continue
+            tree = ast.parse(path.read_text())
+            non_docstring = [
+                node
+                for node in tree.body
+                if not (isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant))
+                and not isinstance(node, ast.ImportFrom | ast.Import)
+            ]
+            assert non_docstring == [], (
+                f"{path} contains executable code - strategy phases are not unlocked yet"
+            )

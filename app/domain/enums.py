@@ -110,11 +110,80 @@ class TradingSession(StrEnum):
     CRYPTO_24_7 = "CRYPTO_24_7"
 
 
-class DeliveryStatus(StrEnum):
+class TelegramDeliveryType(StrEnum):
+    SYSTEM_STARTUP = "SYSTEM_STARTUP"
+    SYSTEM_SHUTDOWN = "SYSTEM_SHUTDOWN"
+    SYSTEM_ERROR = "SYSTEM_ERROR"
+    SYSTEM_WARNING = "SYSTEM_WARNING"
+    DATA_QUALITY_WARNING = "DATA_QUALITY_WARNING"
+    DATA_STALE = "DATA_STALE"
+    WEBSOCKET_RECONNECTING = "WEBSOCKET_RECONNECTING"
+    WEBSOCKET_DEGRADED = "WEBSOCKET_DEGRADED"
+    BOT_PAUSED = "BOT_PAUSED"
+    BOT_RESUMED = "BOT_RESUMED"
+    DAILY_STATUS = "DAILY_STATUS"
+    WATCHLIST = "WATCHLIST"
+    SIGNAL_OPEN = "SIGNAL_OPEN"
+    SIGNAL_UPDATE = "SIGNAL_UPDATE"
+    SIGNAL_PARTIAL = "SIGNAL_PARTIAL"
+    SIGNAL_BREAK_EVEN = "SIGNAL_BREAK_EVEN"
+    SIGNAL_TRAILING = "SIGNAL_TRAILING"
+    SIGNAL_EXIT = "SIGNAL_EXIT"
+    SIGNAL_STOP = "SIGNAL_STOP"
+    SIGNAL_INVALIDATED = "SIGNAL_INVALIDATED"
+    SIGNAL_EXPIRED = "SIGNAL_EXPIRED"
+
+
+class TelegramDeliveryOperation(StrEnum):
+    SEND = "SEND"
+    EDIT = "EDIT"
+    DELETE_OPTIONAL = "DELETE_OPTIONAL"
+
+
+class TelegramDeliveryStatus(StrEnum):
     PENDING = "PENDING"
+    PROCESSING = "PROCESSING"
     SENT = "SENT"
     EDITED = "EDITED"
+    RETRYING = "RETRYING"
     FAILED = "FAILED"
+    DEAD_LETTER = "DEAD_LETTER"
+    SKIPPED_DUPLICATE = "SKIPPED_DUPLICATE"
+    CANCELLED = "CANCELLED"
+
+
+#: Delivery priority: lower number = more important, never dropped.
+#: 1 kritisch · 2 hoch · 3 normal · 4 niedrig
+TELEGRAM_PRIORITY_BY_TYPE: dict[TelegramDeliveryType, int] = {
+    TelegramDeliveryType.SYSTEM_ERROR: 1,
+    TelegramDeliveryType.SIGNAL_STOP: 1,
+    TelegramDeliveryType.SIGNAL_EXIT: 1,
+    TelegramDeliveryType.SIGNAL_INVALIDATED: 1,
+    TelegramDeliveryType.DATA_STALE: 2,
+    TelegramDeliveryType.WEBSOCKET_DEGRADED: 2,
+    TelegramDeliveryType.BOT_PAUSED: 2,
+    TelegramDeliveryType.BOT_RESUMED: 2,
+    TelegramDeliveryType.SYSTEM_STARTUP: 2,
+    TelegramDeliveryType.SYSTEM_SHUTDOWN: 2,
+    TelegramDeliveryType.SYSTEM_WARNING: 2,
+    TelegramDeliveryType.DATA_QUALITY_WARNING: 2,
+    TelegramDeliveryType.SIGNAL_EXPIRED: 2,
+    TelegramDeliveryType.WEBSOCKET_RECONNECTING: 3,
+    TelegramDeliveryType.SIGNAL_OPEN: 3,
+    TelegramDeliveryType.SIGNAL_UPDATE: 3,
+    TelegramDeliveryType.SIGNAL_PARTIAL: 3,
+    TelegramDeliveryType.SIGNAL_BREAK_EVEN: 3,
+    TelegramDeliveryType.SIGNAL_TRAILING: 3,
+    TelegramDeliveryType.WATCHLIST: 4,
+    TelegramDeliveryType.DAILY_STATUS: 4,
+}
+
+
+class TelegramSubsystemState(StrEnum):
+    DISABLED = "DISABLED"
+    HEALTHY = "HEALTHY"
+    DEGRADED = "DEGRADED"
+    UNAVAILABLE = "UNAVAILABLE"
 
 
 class BotState(StrEnum):

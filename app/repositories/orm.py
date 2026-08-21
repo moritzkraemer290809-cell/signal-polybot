@@ -316,17 +316,47 @@ class SystemEvent(Base):
 
 class TelegramDelivery(Base, TimestampMixin):
     __tablename__ = "telegram_deliveries"
+    __table_args__ = (
+        sa.Index("ix_telegram_deliveries_claim", "status", "priority", "scheduled_at"),
+    )
 
     id: Mapped[int] = mapped_column(
         sa.BigInteger().with_variant(sa.Integer(), "sqlite"), primary_key=True, autoincrement=True
     )
+    delivery_id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, unique=True, default=uuid.uuid4)
     signal_id: Mapped[uuid.UUID | None] = mapped_column(
         sa.ForeignKey("signals.id", ondelete="SET NULL"), index=True
     )
+    system_event_id: Mapped[int | None] = mapped_column(sa.BigInteger)
     message_type: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    operation: Mapped[str] = mapped_column(sa.String(16), default="SEND", nullable=False)
     chat_id: Mapped[int] = mapped_column(sa.BigInteger, nullable=False)
     message_id: Mapped[int | None] = mapped_column(sa.BigInteger)
-    status: Mapped[str] = mapped_column(sa.String(16), default="PENDING", index=True)
+    status: Mapped[str] = mapped_column(sa.String(32), default="PENDING", index=True)
+    priority: Mapped[int] = mapped_column(sa.Integer, default=3, nullable=False)
+    payload: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
+    content_hash: Mapped[str | None] = mapped_column(sa.String(64), index=True)
     idempotency_key: Mapped[str] = mapped_column(sa.String(128), unique=True, nullable=False)
-    error: Mapped[str | None] = mapped_column(sa.Text)
+    attempt_count: Mapped[int] = mapped_column(sa.Integer, default=0, nullable=False)
+    scheduled_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    lease_expires_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
     sent_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    last_error_class: Mapped[str | None] = mapped_column(sa.String(64))
+    last_error_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    error: Mapped[str | None] = mapped_column(sa.Text)
+    correlation_id: Mapped[str | None] = mapped_column(sa.String(64))
+
+
+class AppState(Base):
+    """Small persistent key-value store for runtime state (e.g. bot pause)."""
+
+    __tablename__ = "app_state"
+
+    key: Mapped[str] = mapped_column(sa.String(64), primary_key=True)
+    value: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
+    updated_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True),
+        server_default=sa.func.now(),
+        onupdate=sa.func.now(),
+        nullable=False,
+    )

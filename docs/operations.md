@@ -57,6 +57,35 @@ Korrelations-IDs werden pro Signal-Lifecycle gebunden (ab Phase 10 durchgaengig)
 - Redis-/DB-Ausfall: Feed laeuft weiter; Cache/Buffer melden degraded und
   fliessen in den Qualitaetsstatus ein. Kein Prozessabsturz.
 
+## Telegram-Betrieb (Phase 6)
+
+### BotFather-Setup
+
+1. In Telegram `@BotFather` oeffnen -> `/newbot` -> Namen und Username vergeben.
+2. Den angezeigten Token in `.env` als `TELEGRAM_BOT_TOKEN` eintragen (nie committen).
+3. Private Gruppe erstellen, den Bot einladen.
+4. Gruppen-ID ermitteln: kurz `TELEGRAM_ENABLED=true` mit Token starten, eine
+   Nachricht in die Gruppe schreiben und die ID aus den Logs/Updates lesen -
+   oder einen Hilfsbot wie `@userinfobot` nutzen. Supergruppen-IDs sind
+   negativ (z. B. `-1001234567890`).
+5. `TELEGRAM_GROUP_ID` und die eigenen Admin-User-IDs in
+   `TELEGRAM_ADMIN_USER_IDS` eintragen, dann `TELEGRAM_ENABLED=true` setzen.
+
+### Verhalten
+
+- **Long Polling, kein Webhook** (V1): es wird kein Port nach aussen geoeffnet.
+- `/pause` stoppt neue nicht-kritische Deliveries und (ab Phase 7+) Scanner-
+  Aktivitaet - nie Health Checks, Data Engine oder kritische Warnungen.
+  Zustand persistent (`app_state`), ueberlebt Neustarts, idempotent.
+  `APP_KILL_SWITCH=true` wirkt zusaetzlich und kann nur per `.env` geloest werden.
+- `/resume` hebt den Runtime-Pause-Zustand auf (nicht den Kill Switch).
+- Kommando-Antworten gehen direkt (rate-limited) an den anfragenden Chat;
+  Broadcasts (Pause/Resume-Bestaetigung, Systemalerts, spaeter Signale)
+  laufen immer ueber die persistente Queue.
+- Cooldown fuer `/status`, `/health`, `/daily` pro Admin:
+  `TELEGRAM_STATUS_COMMAND_COOLDOWN_SECONDS`.
+- Nicht autorisierte Kommandos: keine Antwort, Audit-System-Event, Metrik.
+
 ## Backup & Recovery
 
 Persistente Daten liegen in den Volumes `polysignal_pgdata` und

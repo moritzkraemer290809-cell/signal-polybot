@@ -42,6 +42,25 @@
   Telegram-Logik; ein Test (`tests/test_isolation.py`) erzwingt, dass der
   Datenlayer solche Module nicht importiert.
 
+## Telegram-Layer (Phase 6)
+
+- Telegram ist der **einzige externe Output-Kanal**; eingehend werden nur
+  Admin-Kommandos verarbeitet (Long Polling, kein Webhook, kein offener Port).
+- Autorisierung strikt ueber `TELEGRAM_ADMIN_USER_IDS` und den konfigurierten
+  Gruppen-/Privat-Chat; nicht autorisierte Kommandos loesen keine
+  Zustandsaenderung und keine Antwort aus, werden aber auditiert (nur
+  User-ID, Chat-Typ, Kommando - keine weiteren personenbezogenen Daten).
+- Der Bot-Token existiert nur als `SecretStr` und in der Request-URL des
+  zentralen Clients; Fehlerobjekte tragen nur Fehlerklassen, Beschreibungen
+  mit Token-/URL-Verdacht werden ersetzt. `/health`, `/status` und
+  `/dashboard` geben weder Token noch Chat-IDs noch Roh-Payloads aus.
+- Kein Kommando kann Trading ausloesen - es existiert kein Code-Pfad fuer
+  Orders, Wallets oder private Polymarket-Daten.
+- Formatter escapen jeden interpolierten Wert (HTML), kappen die Laenge und
+  senden nie Stacktraces oder Konfigurationswerte in die Gruppe.
+- Phase 6 erzeugt keine Handelssignale; Strategie-/Risiko-/Kostenmodule sind
+  weiterhin leere Platzhalter (testseitig erzwungen).
+
 ## Betriebssicherheit
 
 - Gewichteter Rate Limiter unterhalb des dokumentierten Polymarket-Budgets.

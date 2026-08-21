@@ -178,3 +178,72 @@ Flush nach Batchgroesse oder Intervall, Dedup-Keys (z. B. nur der letzte
 Stand einer laufenden Candle, 1 Tick / 5 s, 1 Snapshot / min, Funding nur bei
 Aenderung). Flush-Fehler markieren den Buffer als degraded (fliesst in die
 Datenqualitaet ein), der Feed laeuft weiter.
+
+## Telegram-Layer (Phase 6)
+
+Reiner Kommunikations- und Kontrollkanal - keine Strategie-, Risiko-, Kosten-
+oder Signallogik (per Isolationstest erzwungen).
+
+```mermaid
+flowchart LR
+    subgraph produce["Produzenten (Bootstrap, spaeter Lifecycle)"]
+        SYS["System-/Alert-Events"]
+        CMD2["Pause/Resume-Bestaetigungen"]
+    end
+    DSV["TelegramDeliveryService<br/>Idempotenz · Dedup · Pause-Gating · Overflow"]
+    DBQ[("telegram_deliveries<br/>PENDING/RETRYING/…")]
+    WRK["DeliveryQueueWorker<br/>Lease-Claim · Rate Limiter · Retry"]
+    TGC["HttpTelegramClient<br/>sendMessage / editMessageText"]
+    TG["Telegram Bot API"]
+    POLL["TelegramPollingService<br/>getUpdates Long Polling"]
+    RTR["CommandRouter<br/>Auth · Cooldowns · Handler"]
+
+    SYS --> DSV
+    CMD2 --> DSV
+    DSV --> DBQ --> WRK --> TGC --> TG
+    TG --> POLL --> RTR
+    RTR -->|Bestaetigungen| DSV
+    RTR -->|Antworten direkt, rate-limited| TGC
+```
+
+### Delivery-Modell
+
+Jede Delivery traegt: `delivery_id` (UUID), `idempotency_key` (DB-unique),
+Typ, Operation (SEND/EDIT), Prioritaet 1-4, typisierten JSON-Payload,
+`attempt_count`, `scheduled_at`, Lease, Fehlerklasse (ohne sensible Inhalte),
+`correlation_id`/`signal_id`/`system_event_id`. Zustaende: PENDING →
+PROCESSING → SENT/EDITED bzw. RETRYING → … → DEAD_LETTER, daneben FAILED
+(permanent), SKIPPED_DUPLICATE, CANCELLED.
+
+### Idempotenz & Lease-Recovery
+
+- Der `idempotency_key` ist datenbank-unique: eine gesendete Delivery wird
+  nie erneut gesendet - auch nicht nach Prozessneustart.
+- Startup-Meldung: genau eine pro Application-Start-Correlation-ID.
+- PENDING/RETRYING werden nach Neustart automatisch weiterverarbeitet;
+  PROCESSING mit abgelaufenem Lease wird beim naechsten Claim zurueckgewonnen.
+
+### Prioritaeten & Overflow
+
+1 kritisch (SYSTEM_ERROR, SIGNAL_STOP/EXIT/INVALIDATED) · 2 hoch (DATA_STALE,
+WEBSOCKET_DEGRADED, BOT_PAUSED/RESUMED, Startup/Shutdown/Warnungen) ·
+3 normal (Signal-Lifecycle-Updates) · 4 niedrig (WATCHLIST, DAILY_STATUS).
+Bei vollem Queue-Limit werden zuerst offene Prio-4/3-Deliveries verworfen
+(CANCELLED); Prio 1-2 wird nie verdraengt und nie abgewiesen.
+
+### Rate Limits & Retries
+
+Pro Chat: max. `TELEGRAM_GROUP_MESSAGES_PER_MINUTE` (Default 18) im
+Sliding Window, >= `TELEGRAM_GROUP_MIN_INTERVAL_SECONDS` Abstand, separates
+konservatives Edit-Intervall. Fehlerklassifikation: 429 → Retry mit
+`retry_after`; Netzwerk/5xx → Exponential Backoff + Jitter (begrenzt);
+400/403/404 → FAILED (permanent); 401 → Subsystem UNAVAILABLE. Erschoepfte
+Retries → DEAD_LETTER (System-Event + sichtbar in /status und /dashboard).
+
+### Client-Entscheidung
+
+Bewusst ein duenner httpx-Client hinter dem `TelegramClient`-Protokoll statt
+aiogram/python-telegram-bot: Rate Limiting, Retries, Idempotenz und Command-
+Routing liegen ohnehin in eigenen, getesteten Schichten; das Protokoll haelt
+den Transport austauschbar. V1 nutzt ausschliesslich Long Polling - es gibt
+keinen nach aussen offenen Webhook-Endpunkt.

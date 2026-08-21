@@ -67,7 +67,7 @@ def test_health_ok() -> None:
     assert body["status"] == "ok"
     assert body["components"]["postgres"] == "ok"
     assert body["components"]["redis"] == "ok"
-    assert body["components"]["telegram"] == "not_configured"
+    assert body["components"]["telegram"] == "disabled"
 
 
 def test_health_degraded_when_database_down() -> None:
@@ -244,3 +244,76 @@ def test_dashboard_survives_database_outage() -> None:
         response = client.get("/dashboard")
     assert response.status_code == 200
     assert response.json()["enabled_markets"] is None
+
+
+class FakeTelegramSubsystem:
+    settings = None
+
+    def __init__(self) -> None:
+        from app.config import TelegramSettings
+
+        self.settings = TelegramSettings(_env_file=None, enabled=True)
+        self.repository = object()
+
+    async def health_stats(self):
+        return {
+            "enabled": True,
+            "state": "HEALTHY",
+            "queue_depth": 2,
+            "dead_letter_count": 0,
+            "last_success_at": "2026-08-21T12:00:00+00:00",
+            "worker_alive": True,
+        }
+
+    async def status_stats(self):
+        stats = await self.health_stats()
+        stats.update(
+            polling_alive=True,
+            commands_enabled=True,
+            rate_limit_wait_seconds_total=1.5,
+            delivery_counts={"SENT": 5, "DEAD_LETTER": 0},
+        )
+        return stats
+
+
+class FakeBotState:
+    def __init__(self, paused: bool = False) -> None:
+        self._paused = paused
+
+    async def is_paused(self) -> bool:
+        return self._paused
+
+
+def test_health_includes_telegram_subsystem() -> None:
+    ctx = make_ctx()
+    ctx.telegram = FakeTelegramSubsystem()
+    app = create_app(context=ctx)
+    with TestClient(app) as client:
+        body = client.get("/health").json()
+    telegram = body["components"]["telegram"]
+    assert telegram["state"] == "HEALTHY"
+    assert telegram["queue_depth"] == 2
+    assert telegram["worker_alive"] is True
+
+
+def test_status_includes_telegram_and_runtime_pause() -> None:
+    ctx = make_ctx()
+    ctx.telegram = FakeTelegramSubsystem()
+    ctx.bot_state = FakeBotState(paused=True)
+    app = create_app(context=ctx)
+    with TestClient(app) as client:
+        body = client.get("/status").json()
+    assert body["bot_state"] == "PAUSED"  # runtime pause, not kill switch
+    assert body["telegram"]["delivery_counts"]["SENT"] == 5
+
+
+def test_endpoints_leak_no_token_or_chat_id() -> None:
+    ctx = make_ctx()
+    ctx.settings.telegram.__dict__["bot_token"] = None  # nothing to leak anyway
+    ctx.telegram = FakeTelegramSubsystem()
+    app = create_app(context=ctx)
+    with TestClient(app) as client:
+        for path in ("/health", "/status", "/dashboard"):
+            text = client.get(path).text
+            assert "bot_token" not in text
+            assert "chat_id" not in text

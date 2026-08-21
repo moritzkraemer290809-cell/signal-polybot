@@ -20,7 +20,8 @@ in eine private Telegram-Gruppe. **Der Nutzer handelt manuell.**
 | 3 | Datenmodelle, Alembic, PostgreSQL, Redis, Logging, Health | ✅ |
 | 4 | Polymarket REST Client, Instrument Discovery | ✅ |
 | 5 | WebSocket Data Layer, Orderbuch, Cache/Freshness, Data Quality | ✅ |
-| 6+ | Telegram, Strategie, Risiko/Kosten, Lifecycle, Shadow Mode, Backtests | ⏳ geplant |
+| 6 | Telegram Delivery Service, persistente Queue, Admin-Kommandos | ✅ |
+| 7+ | Marktselektion/Sessions, Strategie, Risiko/Kosten, Lifecycle, Shadow Mode, Backtests | ⏳ geplant |
 
 ## Architekturüberblick
 
@@ -47,7 +48,9 @@ flowchart LR
     WS --> ADP
     DATA --> PG
     DATA --> RD
-    DATA --> STRAT --> MON -.-> TG
+    DATA --> STRAT --> MON
+    MON -.spaeter.-> TGQ["Persistente Delivery Queue"] --> TG
+    TGQ <-.Admin-Kommandos.-> TG
     API --> PG
     API --> RD
 ```
@@ -131,6 +134,21 @@ Discovery über `/v1/info/instruments` aufgelöst.
 
 Ein DB-/Redis-Ausfall degradiert `/health` (503) bzw. liefert `database:
 "unavailable"` in `/status` - der Prozess und der Marktdaten-Feed laufen weiter.
+
+## Telegram (Phase 6)
+
+- `TELEGRAM_ENABLED=false` ist der sichere Default; ohne Token/Gruppen-ID
+  startet die App normal ohne Telegram.
+- Alle ausgehenden Nachrichten laufen ueber eine **persistente, idempotente
+  Delivery-Queue** (PostgreSQL) mit Prioritaeten, Rate Limits, Retries und
+  Dead-Letter-Handling - nie synchron aus Daten- oder Strategie-Callbacks.
+- Admin-Kommandos per Long Polling (kein Webhook): `/status`, `/health`,
+  `/pause`, `/resume`, `/open`, `/watchlist`, `/daily` - nur fuer IDs aus
+  `TELEGRAM_ADMIN_USER_IDS`. Der Pause-Zustand ist persistent.
+- Setup-Anleitung (BotFather, Gruppen-ID, Troubleshooting):
+  [`docs/operations.md`](docs/operations.md).
+- Phase 6 erzeugt keinerlei Handelssignale - die Signal-Templates sind
+  generische Formatvorlagen fuer spaetere Phasen.
 
 ## Lizenz / Haftung
 
