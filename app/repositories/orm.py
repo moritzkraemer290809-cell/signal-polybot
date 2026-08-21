@@ -58,7 +58,7 @@ class Instrument(Base, TimestampMixin):
     symbol: Mapped[str] = mapped_column(sa.String(64), unique=True, nullable=False)
     instrument_type: Mapped[str] = mapped_column(sa.String(32), default="perpetual")
     category: Mapped[str] = mapped_column(sa.String(32), default="")
-    asset_class: Mapped[str] = mapped_column(sa.String(16), default="OTHER")
+    asset_class: Mapped[str] = mapped_column(sa.String(16), default="UNKNOWN")
     base_asset: Mapped[str] = mapped_column(sa.String(32), default="")
     quote_asset: Mapped[str] = mapped_column(sa.String(32), default="")
     price_decimals: Mapped[int] = mapped_column(sa.Integer, default=2)
@@ -359,4 +359,129 @@ class AppState(Base):
         server_default=sa.func.now(),
         onupdate=sa.func.now(),
         nullable=False,
+    )
+
+
+class AssetClassification(Base):
+    """Immutable classification history per instrument."""
+
+    __tablename__ = "asset_classifications"
+    __table_args__ = (
+        sa.Index("ix_asset_classifications_instrument_created", "instrument_pk", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(
+        sa.BigInteger().with_variant(sa.Integer(), "sqlite"), primary_key=True, autoincrement=True
+    )
+    instrument_pk: Mapped[int] = mapped_column(
+        sa.ForeignKey("instruments.id", ondelete="CASCADE"), nullable=False
+    )
+    symbol: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    asset_class: Mapped[str] = mapped_column(sa.String(16), nullable=False)
+    source: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    rule: Mapped[str] = mapped_column(sa.String(128), nullable=False)
+    confidence: Mapped[Decimal] = mapped_column(PriceNumeric, nullable=False)
+    classified_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+    )
+
+
+class MarketSelectionDecision(Base):
+    """Immutable market selection decision history."""
+
+    __tablename__ = "market_selection_decisions"
+    __table_args__ = (
+        sa.Index("ix_market_selection_decisions_instrument_created", "instrument_pk", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True)
+    instrument_pk: Mapped[int] = mapped_column(
+        sa.ForeignKey("instruments.id", ondelete="CASCADE"), nullable=False
+    )
+    symbol: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    asset_class: Mapped[str] = mapped_column(sa.String(16), nullable=False)
+    classification_source: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    session_state: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    calendar_version: Mapped[str | None] = mapped_column(sa.String(32))
+    market_status: Mapped[str] = mapped_column(sa.String(16), nullable=False)
+    data_quality_status: Mapped[str] = mapped_column(sa.String(24), nullable=False)
+    selection_state: Mapped[str] = mapped_column(sa.String(32), nullable=False, index=True)
+    eligibility_status: Mapped[str] = mapped_column(sa.String(32), nullable=False, index=True)
+    market_quality_score: Mapped[int | None] = mapped_column(sa.Integer)
+    quality_components: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
+    reasons: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
+    configuration_version: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    evaluated_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    previous_selection_id: Mapped[uuid.UUID | None] = mapped_column(sa.Uuid)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+    )
+
+
+class ActiveWatchlistEntry(Base, TimestampMixin):
+    """Current watchlist snapshot (one row per instrument on the list)."""
+
+    __tablename__ = "active_watchlist"
+
+    id: Mapped[int] = mapped_column(
+        sa.BigInteger().with_variant(sa.Integer(), "sqlite"), primary_key=True, autoincrement=True
+    )
+    instrument_pk: Mapped[int] = mapped_column(
+        sa.ForeignKey("instruments.id", ondelete="CASCADE"), unique=True, nullable=False
+    )
+    symbol: Mapped[str] = mapped_column(sa.String(64), unique=True, nullable=False)
+    state: Mapped[str] = mapped_column(sa.String(32), nullable=False, index=True)
+    asset_class: Mapped[str] = mapped_column(sa.String(16), nullable=False)
+    quality_score: Mapped[int | None] = mapped_column(sa.Integer)
+    eligibility_status: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    reasons: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
+    activated_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    paused_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    last_decision_id: Mapped[uuid.UUID | None] = mapped_column(sa.Uuid)
+
+
+class WatchlistEvent(Base):
+    """Watchlist state-change history."""
+
+    __tablename__ = "watchlist_events"
+    __table_args__ = (
+        sa.Index("ix_watchlist_events_instrument_created", "instrument_pk", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(
+        sa.BigInteger().with_variant(sa.Integer(), "sqlite"), primary_key=True, autoincrement=True
+    )
+    instrument_pk: Mapped[int] = mapped_column(
+        sa.ForeignKey("instruments.id", ondelete="CASCADE"), nullable=False
+    )
+    symbol: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    event_type: Mapped[str] = mapped_column(sa.String(32), nullable=False, index=True)
+    from_state: Mapped[str | None] = mapped_column(sa.String(32))
+    to_state: Mapped[str | None] = mapped_column(sa.String(32))
+    reasons: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
+    decision_id: Mapped[uuid.UUID | None] = mapped_column(sa.Uuid)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+    )
+
+
+class SessionEvent(Base):
+    """Session state transitions (equity/crypto)."""
+
+    __tablename__ = "session_events"
+    __table_args__ = (sa.Index("ix_session_events_scope_created", "scope", "created_at"),)
+
+    id: Mapped[int] = mapped_column(
+        sa.BigInteger().with_variant(sa.Integer(), "sqlite"), primary_key=True, autoincrement=True
+    )
+    scope: Mapped[str] = mapped_column(sa.String(16), nullable=False)
+    from_state: Mapped[str | None] = mapped_column(sa.String(32))
+    to_state: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    calendar_version: Mapped[str | None] = mapped_column(sa.String(32))
+    occurred_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+    details: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
     )

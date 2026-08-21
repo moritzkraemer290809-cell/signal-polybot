@@ -101,6 +101,8 @@ class DataQualityService:
             Channel.ORDERBOOK: self._freshness.orderbook_seconds,
             Channel.TRADES: self._freshness.trades_seconds,
             Channel.KLINES: self._freshness.candles_seconds,
+            # 24h statistics move slowly; reuse the trades threshold
+            Channel.STATISTICS: self._freshness.trades_seconds,
         }[channel]
 
     def channel_freshness(self, instrument_id: int, channel: Channel) -> FreshnessStatus:

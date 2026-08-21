@@ -24,6 +24,16 @@
   (`app/domain/lifecycle.py`) inkl. erlaubter Transitionen und Terminalzustaende.
 - Persistenzschema fuer Regime, Entscheidungen, Scores und Kostenannahmen.
 
+## Marktselektion vs. Handelsstrategie (Phase 7 vs. 8+)
+
+Die Market Selection Engine (Phase 7) beantwortet nur, WELCHE Maerkte
+technisch analysierbar sind (Daten, Liquiditaet, Session, Policy). Sie
+enthaelt bewusst keinerlei Marktstruktur, Indikatoren, Richtungslogik oder
+Setup-Bewertung - der Market Quality Score ist ein Datenqualitaets-, kein
+Signal-Score. Die eigentliche Strategie (Phase 8) arbeitet ausschliesslich
+auf Instrumenten mit `WATCHLIST_ACTIVE` und darf Selektionsblockaden
+(DATA_STALE, SESSION_CLOSED, CALENDAR_UNAVAILABLE, ...) niemals umgehen.
+
 ## Geplante Struktur (Phase 8)
 
 Multi-Timeframe: 1h Regime/Bias → 15m Struktur → 5m Bestaetigung → 1m optionaler

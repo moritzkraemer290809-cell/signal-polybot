@@ -7,8 +7,11 @@ from enum import StrEnum
 
 class AssetClass(StrEnum):
     EQUITY = "EQUITY"
+    INDEX = "INDEX"
     CRYPTO = "CRYPTO"
-    OTHER = "OTHER"
+    COMMODITY = "COMMODITY"
+    FX = "FX"
+    UNKNOWN = "UNKNOWN"
 
 
 class InstrumentStatus(StrEnum):
@@ -217,6 +220,7 @@ class Channel(StrEnum):
     TRADES = "trades"
     ORDERBOOK = "orderbook"
     KLINES = "klines"
+    STATISTICS = "statistics"
 
 
 class FreshnessStatus(StrEnum):

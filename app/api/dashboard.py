@@ -47,10 +47,15 @@ async def dashboard(request: Request) -> dict[str, Any]:
             ]
         except Exception:
             deliveries = None
+    selection = getattr(ctx, "selection", None)
+    selection_dashboard: dict[str, Any] | None = None
+    if selection is not None:
+        selection_dashboard = await selection.dashboard_details()
     return {
         "enabled_markets": enabled_markets,
         "open_signals": open_signals,
         "data_quality": data_quality.summary() if data_quality is not None else None,
         "telegram_deliveries": deliveries,
+        "market_selection": selection_dashboard,
         "metrics": metrics.snapshot(),
     }

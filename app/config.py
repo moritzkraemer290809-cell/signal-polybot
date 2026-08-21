@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import AliasChoices, BaseModel, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -282,6 +282,182 @@ class DataQualitySettings(_EnvSettings):
     mark_divergence_degraded_bps: float = 300.0
 
 
+class MarketSelectionSettings(_EnvSettings):
+    """Market selection engine configuration (phase 7).
+
+    Conservative defaults: unknown asset classes are excluded, volume and a
+    fresh order book are required, degraded data is NOT acceptable, no
+    Telegram notifications.  Invalid JSON fields fail loudly at startup -
+    never a silently relaxed policy.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="MARKET_SELECTION_", env_file=str(ENV_FILE), extra="ignore"
+    )
+
+    enabled: bool = True
+    refresh_seconds: float = 30.0
+    min_quality_score: int = 70
+    max_watchlist_size: int = 5
+    #: asset classes that may ever become analysable.
+    allowed_asset_classes: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["EQUITY", "CRYPTO"]
+    )
+    #: only these symbols may become WATCHLIST_ACTIVE (empty = any discovered).
+    default_allowlist: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["AAPL-PERP", "BTC-PERP"]
+    )
+    #: denylist always wins over allowlist and overrides.
+    denylist: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    require_volume: bool = True
+    require_fresh_orderbook: bool = True
+    allow_degraded_data: bool = False
+    notify_state_changes: bool = False
+    notify_session_changes: bool = False
+    #: per-symbol threshold overrides, e.g. {"AAPL-PERP": {"max_spread_bps": 30}}
+    symbol_overrides_json: dict[str, dict[str, float | bool]] = Field(default_factory=dict)
+    #: per-asset-class policy, e.g. {"INDEX": {"enabled": true}}
+    asset_class_policies_json: dict[str, dict[str, bool]] = Field(default_factory=dict)
+    #: cumulative depth window around mid used for the depth checks.
+    depth_window_bps: float = 25.0
+    #: configurable classification rules (documented in docs/architecture.md):
+    #: metadata category -> asset class (primary, high confidence)
+    classification_category_map: dict[str, str] = Field(
+        default_factory=lambda: {
+            "crypto": "CRYPTO",
+            "cryptocurrency": "CRYPTO",
+            "equity": "EQUITY",
+            "equities": "EQUITY",
+            "stock": "EQUITY",
+            "stocks": "EQUITY",
+            "index": "INDEX",
+            "indices": "INDEX",
+            "commodity": "COMMODITY",
+            "commodities": "COMMODITY",
+            "fx": "FX",
+            "forex": "FX",
+            "currency": "FX",
+        }
+    )
+    #: symbol -> asset class fallback (empty by default: no hard-wired symbol
+    #: assumptions; operators may add e.g. {"XYZ-PERP": "COMMODITY"}).
+    classification_symbol_map: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("allowed_asset_classes", "default_allowlist", "denylist", mode="before")
+    @classmethod
+    def _parse_lists(cls, value: object) -> object:
+        return _split_csv(value)
+
+    @field_validator("allowed_asset_classes")
+    @classmethod
+    def _validate_asset_classes(cls, value: list[str]) -> list[str]:
+        valid = {"EQUITY", "INDEX", "CRYPTO", "COMMODITY", "FX", "UNKNOWN"}
+        upper = [item.upper() for item in value]
+        unknown = set(upper) - valid
+        if unknown:
+            raise ValueError(f"invalid asset classes: {sorted(unknown)}")
+        return upper
+
+    @field_validator("min_quality_score")
+    @classmethod
+    def _validate_score(cls, value: int) -> int:
+        if not 0 <= value <= 100:
+            raise ValueError("min_quality_score must be within 0..100")
+        return value
+
+
+class EquitySessionSettings(_EnvSettings):
+    """Equity session + calendar configuration (America/New_York only)."""
+
+    model_config = SettingsConfigDict(env_prefix="EQUITY_", env_file=str(ENV_FILE), extra="ignore")
+
+    calendar_enabled: bool = True
+    #: must match the shipped calendar data version; mismatch => CALENDAR_UNAVAILABLE.
+    calendar_version: str = "us-equity-2026.1"
+    calendar_min_year: int = 2026
+    calendar_max_year: int = 2028
+    regular_session_open: str = "09:30"
+    regular_session_close: str = "16:00"
+    early_close_default: str = "13:00"
+    premarket_enabled: bool = True
+    after_hours_enabled: bool = True
+    premarket_analysis_enabled: bool = False
+    after_hours_analysis_enabled: bool = False
+
+    @field_validator("regular_session_open", "regular_session_close", "early_close_default")
+    @classmethod
+    def _validate_time(cls, value: str) -> str:
+        from datetime import time as _time
+
+        hour, _, minute = value.partition(":")
+        _time(int(hour), int(minute))  # raises on invalid input
+        return value
+
+
+class CryptoSessionSettings(_EnvSettings):
+    """Crypto session configuration: 24/7 with optional thin-liquidity windows."""
+
+    model_config = SettingsConfigDict(env_prefix="CRYPTO_", env_file=str(ENV_FILE), extra="ignore")
+
+    session_enabled: bool = True
+    #: UTC windows, e.g. [{"days": [5, 6], "start": "22:00", "end": "04:00"}]
+    #: (days: 0=Monday .. 6=Sunday; end < start spans midnight)
+    thin_liquidity_windows_json: list[dict[str, Any]] = Field(default_factory=list)
+    thin_liquidity_policy: Literal["LIMITED_SESSION", "IGNORE"] = "LIMITED_SESSION"
+
+    @field_validator("thin_liquidity_windows_json")
+    @classmethod
+    def _validate_windows(cls, value: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        from datetime import time as _time
+
+        for window in value:
+            for key in ("start", "end"):
+                raw = str(window.get(key, ""))
+                hour, _, minute = raw.partition(":")
+                _time(int(hour), int(minute))  # raises on invalid input
+            days = window.get("days", list(range(7)))
+            if not all(isinstance(day, int) and 0 <= day <= 6 for day in days):
+                raise ValueError("thin liquidity window days must be 0..6")
+        return value
+
+
+class SelectionThresholdSettings(_EnvSettings):
+    """Per-asset-class market quality thresholds (pUSD notionals, bps spreads).
+
+    Conservative defaults documented in docs/architecture.md; overridable per
+    symbol via MARKET_SELECTION_SYMBOL_OVERRIDES_JSON.
+    """
+
+    model_config = SettingsConfigDict(env_file=str(ENV_FILE), extra="ignore")
+
+    equity_max_spread_bps: float = Field(
+        default=20.0, validation_alias=AliasChoices("EQUITY_MAX_SPREAD_BPS")
+    )
+    crypto_max_spread_bps: float = Field(
+        default=10.0, validation_alias=AliasChoices("CRYPTO_MAX_SPREAD_BPS")
+    )
+    equity_min_book_depth_pusd: float = Field(
+        default=5_000.0, validation_alias=AliasChoices("EQUITY_MIN_BOOK_DEPTH_PUSD")
+    )
+    crypto_min_book_depth_pusd: float = Field(
+        default=10_000.0, validation_alias=AliasChoices("CRYPTO_MIN_BOOK_DEPTH_PUSD")
+    )
+    equity_min_volume_24h_pusd: float = Field(
+        default=100_000.0, validation_alias=AliasChoices("EQUITY_MIN_VOLUME_24H_PUSD")
+    )
+    crypto_min_volume_24h_pusd: float = Field(
+        default=500_000.0, validation_alias=AliasChoices("CRYPTO_MIN_VOLUME_24H_PUSD")
+    )
+    equity_max_mark_index_mid_deviation_bps: float = Field(
+        default=75.0,
+        validation_alias=AliasChoices("EQUITY_MAX_MARK_INDEX_MID_DEVIATION_BPS"),
+    )
+    crypto_max_mark_index_mid_deviation_bps: float = Field(
+        default=50.0,
+        validation_alias=AliasChoices("CRYPTO_MAX_MARK_INDEX_MID_DEVIATION_BPS"),
+    )
+
+
 class Settings(BaseModel):
     """Aggregated, fully typed application configuration."""
 
@@ -295,6 +471,10 @@ class Settings(BaseModel):
     telegram: TelegramSettings = Field(default_factory=TelegramSettings)
     universe: UniverseSettings = Field(default_factory=UniverseSettings)
     data_quality: DataQualitySettings = Field(default_factory=DataQualitySettings)
+    selection: MarketSelectionSettings = Field(default_factory=MarketSelectionSettings)
+    equity_sessions: EquitySessionSettings = Field(default_factory=EquitySessionSettings)
+    crypto_sessions: CryptoSessionSettings = Field(default_factory=CryptoSessionSettings)
+    thresholds: SelectionThresholdSettings = Field(default_factory=SelectionThresholdSettings)
 
 
 @lru_cache(maxsize=1)

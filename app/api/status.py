@@ -89,6 +89,25 @@ async def status(request: Request) -> dict[str, Any]:
     if data_quality is not None:
         quality = data_quality.summary()
 
+    selection = getattr(ctx, "selection", None)
+    selection_status: dict[str, Any] | str
+    watchlist: dict[str, Any] | None = None
+    if selection is not None:
+        selection_status = await selection.status_stats()
+        watchlist = await selection.watchlist_details()
+    elif settings.selection.enabled:
+        selection_status = "enabled_not_initialized"
+    else:
+        selection_status = "disabled"
+
+    display_tz_now = None
+    try:
+        from zoneinfo import ZoneInfo
+
+        display_tz_now = datetime.now(tz=ZoneInfo(settings.app.display_timezone)).isoformat()
+    except Exception:
+        display_tz_now = None
+
     telegram_subsystem = getattr(ctx, "telegram", None)
     telegram: dict[str, Any] | str
     if telegram_subsystem is not None:
@@ -114,4 +133,7 @@ async def status(request: Request) -> dict[str, Any]:
         "market_data": market,
         "data_quality": quality,
         "telegram": telegram,
+        "display_time": display_tz_now,
+        "market_selection": selection_status,
+        "watchlist": watchlist,
     }

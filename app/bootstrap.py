@@ -37,11 +37,23 @@ from app.repositories.database import Database
 from app.repositories.decision_repository import DecisionRepository
 from app.repositories.funding_repository import FundingRateRepository
 from app.repositories.instrument_repository import InstrumentRepository
+from app.repositories.market_selection_repository import MarketSelectionRepository
 from app.repositories.market_tick_repository import MarketTickRepository
 from app.repositories.orderbook_repository import OrderbookSnapshotRepository
+from app.repositories.session_event_repository import SessionEventRepository
 from app.repositories.signal_repository import SignalRepository
 from app.repositories.system_event_repository import SystemEventRepository
 from app.repositories.telegram_delivery_repository import TelegramDeliveryRepository
+from app.repositories.watchlist_repository import WatchlistRepository
+from app.selection.classification import AssetClassifier
+from app.selection.market_selection_engine import MarketSelectionService
+from app.selection.selection_events import SelectionNotifier
+from app.selection.selection_scheduler import MarketSelectionCoordinator
+from app.selection.watchlist_service import WatchlistService
+from app.sessions.early_close_provider import StaticUsEquityEarlyCloseProvider
+from app.sessions.equity_calendar import EquityCalendar
+from app.sessions.holiday_provider import StaticUsEquityHolidayProvider
+from app.sessions.session_manager import CryptoSessionManager, EquitySessionManager
 from app.telegram.authorization import TelegramAuthorizer
 from app.telegram.client import HttpTelegramClient
 from app.telegram.command_router import CommandProviders, TelegramCommandRouter
@@ -78,6 +90,9 @@ class AppContext:
     books: OrderbookManager | None = None
     bot_state: BotStateService | None = None
     telegram: TelegramSubsystem | None = None
+    equity_sessions: EquitySessionManager | None = None
+    crypto_sessions: CryptoSessionManager | None = None
+    selection: MarketSelectionCoordinator | None = None
     start_correlation_id: str = ""
     started_at: datetime = field(default_factory=lambda: datetime.now(tz=UTC))
     extra: dict[str, Any] = field(default_factory=dict)
@@ -86,6 +101,8 @@ class AppContext:
         log = get_logger("bootstrap")
         if self.universe_job is not None:
             await self.universe_job.stop()
+        if self.selection is not None:
+            await self.selection.stop()
         if self.market_data is not None:
             await self.market_data.stop()
         if self.ws_client is not None:
@@ -418,10 +435,56 @@ async def build_context(settings: Settings) -> AppContext:
             await market_data.sync_universe(
                 [(row.id, row.instrument_id, row.symbol) for row in rows]
             )
+            ctx_after = ctx_holder.get("ctx")
+            if ctx_after is not None and ctx_after.selection is not None:
+                ctx_after.selection.trigger()
 
         on_refresh = _sync_after_refresh
         await ws_client.start()
         await market_data.start()
+
+    # --- sessions + market selection (phase 7) ------------------------------
+    equity_calendar = EquityCalendar(
+        settings.equity_sessions,
+        StaticUsEquityHolidayProvider(),
+        StaticUsEquityEarlyCloseProvider(),
+    )
+    equity_sessions = EquitySessionManager(settings.equity_sessions, equity_calendar)
+    crypto_sessions = CryptoSessionManager(settings.crypto_sessions)
+
+    selection: MarketSelectionCoordinator | None = None
+    if settings.selection.enabled:
+        selection_repo = MarketSelectionRepository(db.session_factory)
+        watchlist_repo = WatchlistRepository(db.session_factory)
+        session_event_repo = SessionEventRepository(db.session_factory)
+        notifier = SelectionNotifier(
+            settings.selection,
+            system_event_repo,
+            telegram.delivery_service if telegram is not None else None,
+            bot_state,
+        )
+        selection_service = MarketSelectionService(
+            settings.selection,
+            settings.thresholds,
+            AssetClassifier(settings.selection),
+            market_data,
+            data_quality,
+            books,
+            configuration_version=settings.app.config_version,
+        )
+        watchlist_service = WatchlistService(watchlist_repo, settings.selection, notifier)
+        selection = MarketSelectionCoordinator(
+            settings.selection,
+            selection_service,
+            watchlist_service,
+            equity_sessions,
+            crypto_sessions,
+            instrument_repo,
+            selection_repo,
+            session_event_repo,
+            notifier,
+        )
+        await selection.start()
 
     universe_job: UniverseRefreshJob | None = None
     if settings.universe.refresh_enabled:
@@ -454,6 +517,9 @@ async def build_context(settings: Settings) -> AppContext:
         books=books,
         bot_state=bot_state,
         telegram=telegram,
+        equity_sessions=equity_sessions,
+        crypto_sessions=crypto_sessions,
+        selection=selection,
         start_correlation_id=start_correlation_id,
     )
     ctx_holder["ctx"] = ctx

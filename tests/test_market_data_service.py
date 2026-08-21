@@ -137,9 +137,10 @@ async def test_sync_universe_builds_expected_channels(service_setup) -> None:
         assert f"bbo::{instrument_id}" in channels
         assert f"book::{instrument_id}" in channels
         assert f"trades::{instrument_id}" in channels
+        assert f"statistics::{instrument_id}" in channels
         for timeframe in ("1m", "5m", "15m", "1h"):
             assert f"klines::{instrument_id}::{timeframe}" in channels
-    assert len(channels) == 2 * (4 + 4)
+    assert len(channels) == 2 * (5 + 4)
 
 
 async def test_sync_universe_removes_delisted_instruments(service_setup) -> None:

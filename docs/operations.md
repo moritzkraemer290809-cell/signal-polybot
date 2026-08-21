@@ -86,6 +86,27 @@ Korrelations-IDs werden pro Signal-Lifecycle gebunden (ab Phase 10 durchgaengig)
   `TELEGRAM_STATUS_COMMAND_COOLDOWN_SECONDS`.
 - Nicht autorisierte Kommandos: keine Antwort, Audit-System-Event, Metrik.
 
+## Marktselektion & Sessions (Phase 7)
+
+- Zustand: `/health` -> `market_selection` (Subsystem-State, Job-Liveness,
+  Watchlist-Zaehler, Kalenderversion); `/status` -> Sessions inkl. naechster
+  Transition, aktive/pausierte Watchlist mit Gruenden; `/dashboard` ->
+  letzte Entscheidungen mit Quality-Komponenten.
+- Kalender-Update-Prozess (jaehrlich): offiziellen NYSE-Feiertagsplan
+  pruefen, `app/sessions/us_equity_calendar_data.py` ergaenzen (FULL_HOLIDAYS
+  + EARLY_CLOSES), VERSION und COVERAGE_MAX_YEAR anheben, dazu passend
+  `EQUITY_CALENDAR_VERSION`/`EQUITY_CALENDAR_MAX_YEAR` in `.env` setzen,
+  Kalender-Tests laufen lassen. Versions-Mismatch oder abgelaufene Abdeckung
+  => `CALENDAR_UNAVAILABLE`, Equity wird konservativ blockiert.
+- `EQUITY_CALENDAR_ENABLED=false` schaltet Equity-Analyse vollstaendig ab.
+- Watchlist leer? `/dashboard` -> `recent_decisions[].reasons` zeigt die
+  strukturierten Gruende (z. B. VOLUME_UNAVAILABLE, wenn der oeffentliche
+  statistics-Channel kein Volumen liefert -> ggf.
+  `MARKET_SELECTION_REQUIRE_VOLUME=false` setzen; bewusst konservativer
+  Default).
+- Globaler PAUSED-Modus: Data Engine und Selection laufen weiter, nur
+  optionale Selektionsmeldungen entfallen.
+
 ## Backup & Recovery
 
 Persistente Daten liegen in den Volumes `polysignal_pgdata` und

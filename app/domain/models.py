@@ -15,8 +15,10 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.domain.enums import AssetClass, InstrumentStatus, Timeframe
 
-_EQUITY_CATEGORIES = {"equity", "equities", "stock", "stocks"}
-_CRYPTO_CATEGORIES = {"crypto", "cryptocurrency"}
+# Metadata-category hint mapping.  The authoritative, configurable
+# classification lives in app/selection/classification.py; this property is
+# only a coarse hint derived from public instrument metadata.
+_CATEGORY_HINTS: dict[str, AssetClass] = {}
 
 
 def ms_to_utc(timestamp_ms: int) -> datetime:
@@ -68,12 +70,25 @@ class InstrumentMeta(_Frozen):
 
     @property
     def asset_class(self) -> AssetClass:
-        category = self.category.strip().lower()
-        if category in _CRYPTO_CATEGORIES:
-            return AssetClass.CRYPTO
-        if category in _EQUITY_CATEGORIES:
-            return AssetClass.EQUITY
-        return AssetClass.OTHER
+        if not _CATEGORY_HINTS:
+            _CATEGORY_HINTS.update(
+                {
+                    "crypto": AssetClass.CRYPTO,
+                    "cryptocurrency": AssetClass.CRYPTO,
+                    "equity": AssetClass.EQUITY,
+                    "equities": AssetClass.EQUITY,
+                    "stock": AssetClass.EQUITY,
+                    "stocks": AssetClass.EQUITY,
+                    "index": AssetClass.INDEX,
+                    "indices": AssetClass.INDEX,
+                    "commodity": AssetClass.COMMODITY,
+                    "commodities": AssetClass.COMMODITY,
+                    "fx": AssetClass.FX,
+                    "forex": AssetClass.FX,
+                    "currency": AssetClass.FX,
+                }
+            )
+        return _CATEGORY_HINTS.get(self.category.strip().lower(), AssetClass.UNKNOWN)
 
     @property
     def status(self) -> InstrumentStatus:

@@ -33,8 +33,10 @@ def test_instrument_asset_class_classification(instruments_payload) -> None:
     metas = [InstrumentMeta.from_api(item) for item in instruments_payload]
     assert metas[0].asset_class is AssetClass.CRYPTO
     assert metas[1].asset_class is AssetClass.EQUITY
-    other = InstrumentMeta.from_api({"instrument_id": 9, "symbol": "X-PERP", "category": "fx"})
-    assert other.asset_class is AssetClass.OTHER
+    fx = InstrumentMeta.from_api({"instrument_id": 9, "symbol": "X-PERP", "category": "fx"})
+    assert fx.asset_class is AssetClass.FX
+    unknown = InstrumentMeta.from_api({"instrument_id": 10, "symbol": "Y-PERP", "category": ""})
+    assert unknown.asset_class is AssetClass.UNKNOWN
 
 
 def test_instrument_decimal_fields(instruments_payload) -> None:

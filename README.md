@@ -21,7 +21,8 @@ in eine private Telegram-Gruppe. **Der Nutzer handelt manuell.**
 | 4 | Polymarket REST Client, Instrument Discovery | ✅ |
 | 5 | WebSocket Data Layer, Orderbuch, Cache/Freshness, Data Quality | ✅ |
 | 6 | Telegram Delivery Service, persistente Queue, Admin-Kommandos | ✅ |
-| 7+ | Marktselektion/Sessions, Strategie, Risiko/Kosten, Lifecycle, Shadow Mode, Backtests | ⏳ geplant |
+| 7 | Market Selection Engine, Session Manager, Kalender, Watchlist | ✅ |
+| 8+ | Strategie, Risiko/Kosten, Lifecycle, Shadow Mode, Backtests | ⏳ geplant |
 
 ## Architekturüberblick
 
@@ -134,6 +135,20 @@ Discovery über `/v1/info/instruments` aufgelöst.
 
 Ein DB-/Redis-Ausfall degradiert `/health` (503) bzw. liefert `database:
 "unavailable"` in `/status` - der Prozess und der Marktdaten-Feed laufen weiter.
+
+## Marktselektion & Sessions (Phase 7)
+
+- **Market Quality Score (0-100)**: reiner Daten-/Liquiditaets-/
+  Handelbarkeitsscore (Datenqualitaet 30, Spread 20, Tiefe 20, Volumen 15,
+  Marktstatus 10, Preiskonsistenz 5) - kein Setup-Score, keine Richtung.
+- **Session Manager**: Equity strikt in `America/New_York` (Regular 09:30-16:00,
+  Pre-Market/After-Hours ohne aktive Analyse in V1), versionierter lokaler
+  NYSE-Kalender (`us-equity-2026.1`, Abdeckung 2026-2028) mit Feiertagen und
+  Early Closes; Crypto 24/7 mit optionalen Thin-Liquidity-Fenstern.
+- **Watchlist**: persistente Liste technisch analysierbarer Instrumente
+  (keine Trade-Ideen); Allowlist/Denylist, max. Groesse, Priorisierung nach
+  Quality Score, Events (ADDED/PAUSED/RESTORED/REMOVED) und unveraenderliche
+  Entscheidungs-Historie. Details: `docs/architecture.md`, `docs/strategy.md`.
 
 ## Telegram (Phase 6)
 

@@ -61,6 +61,19 @@
 - Phase 6 erzeugt keine Handelssignale; Strategie-/Risiko-/Kostenmodule sind
   weiterhin leere Platzhalter (testseitig erzwungen).
 
+## Marktselektions-Layer (Phase 7)
+
+- Reine Daten-/Handelbarkeitsbewertung: keine Richtungs-, Entry-, Stop-,
+  Hebel- oder Trade-Begriffe in Logik, Persistenz, Logs oder Telegram-
+  Meldungen (testseitig erzwungen).
+- Selektions-/Session-Meldungen sind optional (Default aus), laufen ueber
+  die Phase-6-Delivery-Queue (Dedup + Rate Limit) und enthalten nie eine
+  Handelsempfehlung; im globalen PAUSED-Modus werden sie unterdrueckt.
+- Der lokale Handelskalender ist versioniert und offline - kein
+  Laufzeit-Netzzugriff; unbekannte Zeitraeume blockieren Equity konservativ.
+- Denylist schlaegt Allowlist; die Allowlist kann weder Session- noch
+  Datenqualitaets- noch Policy-Blockaden umgehen.
+
 ## Betriebssicherheit
 
 - Gewichteter Rate Limiter unterhalb des dokumentierten Polymarket-Budgets.

@@ -247,3 +247,96 @@ aiogram/python-telegram-bot: Rate Limiting, Retries, Idempotenz und Command-
 Routing liegen ohnehin in eigenen, getesteten Schichten; das Protokoll haelt
 den Transport austauschbar. V1 nutzt ausschliesslich Long Polling - es gibt
 keinen nach aussen offenen Webhook-Endpunkt.
+
+## Marktselektion & Sessions (Phase 7)
+
+Beantwortet ausschliesslich: Welche Instrumente sind jetzt technisch
+analysierbar - und warum (nicht)? Keine Handelsidee, keine Richtung; die
+Begriffe LONG/SHORT/Entry/Stop/Target/Leverage existieren in diesem Layer
+nicht (testseitig erzwungen).
+
+```mermaid
+flowchart LR
+    DISC["Instrument Discovery<br/>(Phase 4)"]
+    CLS["AssetClassifier<br/>konfigurierbare Regeln<br/>+ Historie"]
+    SES["Session Manager<br/>Equity (NY) · Crypto 24/7"]
+    CAL["Versionierter US-Kalender<br/>us-equity-2026.1 (2026-2028)"]
+    DQ["DataQualityService<br/>(Phase 5, gecachte Livedaten)"]
+    MQ["Market Quality Engine<br/>Score 0-100"]
+    EL["Eligibility Gates<br/>Policy · Session · Daten · Liquiditaet"]
+    WL["WatchlistService<br/>ACTIVE / PAUSED + Events"]
+    DB2[("decisions · watchlist ·<br/>classifications · session_events")]
+
+    DISC --> CLS --> EL
+    CAL --> SES --> EL
+    DQ --> MQ --> EL
+    EL --> WL --> DB2
+    EL --> DB2
+```
+
+### Asset-Klassifikation
+
+Regelreihenfolge (erste Regel gewinnt): (1) Metadaten-Kategorie ueber die
+konfigurierbare Category-Map (Confidence 0.95), (2) konfigurierbare
+Symbol-Map (Confidence 0.6; standardmaessig LEER - keine hartkodierten
+Symbol-Annahmen), (3) UNKNOWN (0.0, nie analysiert). Jede Entscheidung wird
+mit Quelle/Regel/Confidence/Zeitstempel in `asset_classifications`
+historisiert (Append nur bei Aenderung). Policies: EQUITY + CRYPTO erlaubt;
+INDEX/COMMODITY/FX `DISABLED_BY_POLICY` bis explizit per
+`MARKET_SELECTION_ASSET_CLASS_POLICIES_JSON` aktiviert.
+
+### Sessions & Kalender
+
+- Equity strikt in `America/New_York` (DST via IANA); Regular 09:30-16:00,
+  Pre-Market ab 04:00 / After-Hours bis 20:00 ohne aktive Analyse in V1.
+- Early Closes sind rein kalenderbasiert (13:00 ET per
+  `EQUITY_EARLY_CLOSE_DEFAULT`), nie eine generische Regel.
+- Lokaler, versionierter Kalender (`app/sessions/us_equity_calendar_data.py`,
+  Version `us-equity-2026.1`, Abdeckung 2026-2028, NYSE-Beobachtungsregeln
+  dokumentiert). Kein Laufzeit-Netzzugriff. Datum ausserhalb der Abdeckung,
+  Versions-Mismatch oder deaktivierter Kalender => `CALENDAR_UNAVAILABLE`
+  (Equity konservativ blockiert, nie stillschweigend "regular").
+- Crypto: `CRYPTO_24_7`; optionale UTC-Thin-Liquidity-Fenster fuehren bei
+  Policy `LIMITED_SESSION` zu verschaerften Schwellen (Spread x0.7,
+  Tiefe/Volumen x1.5), blockieren aber nicht.
+
+### Market Quality Score (0-100)
+
+Reiner Daten-/Handelbarkeits-/Liquiditaetsscore - kein Indikator, kein
+Trend, kein Funding, keine Richtung. Komponenten: Datenqualitaet 30
+(HEALTHY voll, DEGRADED halb, sonst 0), Spread 20 (voll bis T/2, linear bis
+T), Tiefe 20 (schwaechere Buchseite zaehlt; nur aus frischem, verlaesslichem
+Buch), 24h-Volumen 15 (aus dem oeffentlichen `statistics`-WS-Channel; >=2x
+Minimum voll), Marktstatus 10, Mark/Index/Mid-Konsistenz 5. Fehlende Werte
+zaehlen nie positiv.
+
+### Eligibility (harte Gates, Score kann sie nie ueberstimmen)
+
+Reihenfolge: Delisting/Konfiguration -> Denylist (schlaegt alles) ->
+Asset-Class-Policy -> Session/Kalender (Allowlist kann das nie umgehen) ->
+Marktstatus -> Datenqualitaet (DEGRADED nur mit
+`MARKET_SELECTION_ALLOW_DEGRADED_DATA`) -> Orderbuch-Frische -> BBO/Mark
+Price -> Volumen -> Spread (strikt unter Schwelle) -> Tiefe ->
+Preiskonsistenz -> Mindestscore (Default 70). Alle Gruende werden gesammelt
+und strukturiert persistiert; der erste blockierende Gate bestimmt den
+Status.
+
+### Watchlist-Lifecycle
+
+Kandidaten = ELIGIBLE und Allowlist; Ranking nach Quality Score, Top-N
+(`MARKET_SELECTION_MAX_WATCHLIST_SIZE`). Uebergaenge erzeugen Events
+(ADDED/PAUSED/RESTORED/REMOVED) und unveraenderliche Decision-Rows (nur bei
+Outcome-Aenderung - idempotente Zyklen erzeugen keine Duplikate). Restart:
+Watchlist wird aus PostgreSQL wiederhergestellt und im naechsten Zyklus
+revalidiert. DB-Ausfall: nicht persistierte Zustandswechsel werden nie als
+erfolgreich gemeldet; der Coordinator ist DEGRADED und retried.
+
+### Scheduling
+
+`MarketSelectionCoordinator` laeuft alle `MARKET_SELECTION_REFRESH_SECONDS`
+(Default 30 s) mit asyncio-Lock gegen Ueberlappung; UniverseRefresh triggert
+sofort. Nur gecachte Livedaten (Tracker, Orderbuch, DataQuality) - keine
+REST-Last pro Bewertung. Session-Transitionen werden erkannt, persistiert
+(`session_events`) und optional (Default aus) via Delivery Queue gemeldet;
+im globalen PAUSED-Modus laeuft die technische Aktualisierung weiter, nur
+optionale Meldungen entfallen.

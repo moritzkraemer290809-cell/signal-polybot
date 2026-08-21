@@ -45,6 +45,7 @@ _CHANNEL_MAP = {
     "book": Channel.ORDERBOOK,
     "trades": Channel.TRADES,
     "klines": Channel.KLINES,
+    "statistics": Channel.STATISTICS,
 }
 
 #: minimum spacing between order book resync requests per instrument
@@ -76,6 +77,10 @@ class InstrumentTracker:
     last_mark_price: Decimal | None = None
     last_index_price: Decimal | None = None
     last_funding_rate: Decimal | None = None
+    last_bbo: ev.BboUpdate | None = None
+    #: 24h volume in quote asset (pUSD) from the public statistics channel.
+    last_volume_24h: Decimal | None = None
+    last_stats_at: datetime | None = None
     last_resync_request_at: float | None = None
     resync_requests: int = 0
 
@@ -199,6 +204,7 @@ class MarketDataService:
             channels.add(f"bbo::{instrument_id}")
             channels.add(f"book::{instrument_id}")
             channels.add(f"trades::{instrument_id}")
+            channels.add(f"statistics::{instrument_id}")
             for timeframe in self._ws_settings.kline_timeframes:
                 channels.add(f"klines::{instrument_id}::{timeframe}")
         await self._ws.set_subscriptions(channels)
@@ -268,6 +274,8 @@ class MarketDataService:
         elif channel is Channel.KLINES:
             timeframe = parts[2] if len(parts) > 2 else ""
             await self._handle_kline(tracker, frame, timeframe)
+        elif channel is Channel.STATISTICS:
+            self._handle_statistics(tracker, frame)
 
     # ------------------------------------------------------------- handlers
 
@@ -342,6 +350,7 @@ class MarketDataService:
             self._record_invalid(tracker, Channel.BBO, ev.OUT_OF_ORDER)
             return
         self._record_valid(tracker, Channel.BBO, ts)
+        tracker.last_bbo = bbo
         await self._cache.set_bbo(
             tracker.instrument_id,
             {
@@ -479,6 +488,43 @@ class MarketDataService:
             {"symbol": tracker.symbol, "resync_requests": tracker.resync_requests},
         )
         await self._ws.resubscribe({f"book::{tracker.instrument_id}"})
+
+    def _handle_statistics(self, tracker: InstrumentTracker, frame: WsFrame) -> None:
+        """Extract public 24h volume from the statistics channel.
+
+        The payload shape is parsed tolerantly (volume_24h / quote_volume_24h /
+        volume / quote_volume); values must be finite and non-negative,
+        otherwise the event is rejected.  Absence of a usable volume field is
+        NOT an error - the instrument simply stays VOLUME_UNAVAILABLE.
+        """
+        payload = frame.data if isinstance(frame.data, dict) else None
+        if payload is None:
+            self._record_invalid(tracker, Channel.STATISTICS, ev.MALFORMED)
+            return
+        raw = next(
+            (
+                payload[key]
+                for key in ("volume_24h", "quote_volume_24h", "volume", "quote_volume")
+                if payload.get(key) not in (None, "")
+            ),
+            None,
+        )
+        ts = ms_to_utc(frame.ts_ms) if frame.ts_ms else self._now()
+        if raw is None:
+            # statistics without volume: still a valid heartbeat for the channel
+            self._record_valid(tracker, Channel.STATISTICS, ts)
+            return
+        try:
+            volume = Decimal(str(raw))
+        except Exception:
+            self._record_invalid(tracker, Channel.STATISTICS, ev.NON_FINITE_VALUE)
+            return
+        if not volume.is_finite() or volume < 0:
+            self._record_invalid(tracker, Channel.STATISTICS, ev.NON_FINITE_VALUE)
+            return
+        tracker.last_volume_24h = volume
+        tracker.last_stats_at = ts
+        self._record_valid(tracker, Channel.STATISTICS, ts)
 
     # ------------------------------------------------------------- tracking
 

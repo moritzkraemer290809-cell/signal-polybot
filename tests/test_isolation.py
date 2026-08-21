@@ -185,3 +185,44 @@ def test_phase6_generates_no_trade_signals() -> None:
             assert non_docstring == [], (
                 f"{path} contains executable code - strategy phases are not unlocked yet"
             )
+
+
+def test_selection_and_session_layer_isolation() -> None:
+    """Selection modules must not import strategy/cost/risk/trading modules;
+    session modules must additionally not import Telegram or the data layer."""
+    selection_forbidden = (
+        "app.strategy",
+        "app.risk",
+        "app.costs",
+        "app.monitoring",
+        "app.adapters.polymarket_rest",
+        "app.adapters.polymarket_ws",
+    )
+    session_forbidden = (*selection_forbidden, "app.telegram", "app.adapters", "app.data")
+    for directory, forbidden in (
+        (APP_DIR / "selection", selection_forbidden),
+        (APP_DIR / "sessions", session_forbidden),
+    ):
+        for path in sorted(directory.rglob("*.py")):
+            tree = ast.parse(path.read_text())
+            for node in ast.walk(tree):
+                modules: list[str] = []
+                if isinstance(node, ast.Import):
+                    modules = [alias.name for alias in node.names]
+                elif isinstance(node, ast.ImportFrom) and node.module:
+                    modules = [node.module]
+                for module in modules:
+                    for prefix in forbidden:
+                        assert not module.startswith(prefix), (
+                            f"{path} imports {module!r} - layer isolation violated"
+                        )
+
+
+def test_selection_layer_contains_no_trading_terminology() -> None:
+    """Phase 7 never uses direction/trade terms in decision logic."""
+    forbidden_terms = ("LONG", "SHORT", "entry_price", "stop_price", "take_profit", "leverage")
+    for directory in (APP_DIR / "selection", APP_DIR / "sessions"):
+        for path in sorted(directory.rglob("*.py")):
+            source = path.read_text()
+            for term in forbidden_terms:
+                assert term not in source, f"{path} contains trading term {term!r}"

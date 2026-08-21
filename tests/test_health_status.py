@@ -317,3 +317,106 @@ def test_endpoints_leak_no_token_or_chat_id() -> None:
             text = client.get(path).text
             assert "bot_token" not in text
             assert "chat_id" not in text
+
+
+class FakeSelectionCoordinator:
+    async def health_stats(self):
+        return {
+            "state": "HEALTHY",
+            "job_alive": True,
+            "active_watchlist": 2,
+            "paused_watchlist": 1,
+            "calendar_available": True,
+            "calendar_version": "us-equity-2026.1",
+            "calendar_unavailable_count": 0,
+            "last_run_at": "2026-08-21T12:00:00+00:00",
+        }
+
+    async def status_stats(self):
+        stats = await self.health_stats()
+        stats.update(
+            equity_session="EQUITY_REGULAR",
+            equity_next_transition_at="2026-08-21T20:00:00+00:00",
+            equity_next_transition_state="EQUITY_AFTER_HOURS",
+            crypto_session="CRYPTO_24_7",
+            last_run={"evaluated": 2},
+            config={"min_quality_score": 70},
+        )
+        return stats
+
+    async def watchlist_details(self):
+        return {
+            "active": [
+                {
+                    "symbol": "BTC-PERP",
+                    "asset_class": "CRYPTO",
+                    "quality_score": 95,
+                    "eligibility_status": "ELIGIBLE",
+                    "state": "WATCHLIST_ACTIVE",
+                }
+            ],
+            "paused": [
+                {
+                    "symbol": "AAPL-PERP",
+                    "asset_class": "EQUITY",
+                    "eligibility_status": "SESSION_CLOSED",
+                    "state": "WATCHLIST_PAUSED",
+                    "reasons": [{"code": "SESSION_CLOSED", "detail": "weekend"}],
+                }
+            ],
+        }
+
+    async def dashboard_details(self):
+        return {"summary": {"evaluated": 2}, "recent_decisions": [], "recent_watchlist_events": []}
+
+
+def test_health_includes_market_selection() -> None:
+    ctx = make_ctx()
+    ctx.selection = FakeSelectionCoordinator()
+    app = create_app(context=ctx)
+    with TestClient(app) as client:
+        body = client.get("/health").json()
+    selection = body["components"]["market_selection"]
+    assert selection["state"] == "HEALTHY"
+    assert selection["active_watchlist"] == 2
+    assert selection["calendar_version"] == "us-equity-2026.1"
+
+
+def test_status_includes_sessions_and_watchlist_without_trade_terms() -> None:
+    ctx = make_ctx()
+    ctx.selection = FakeSelectionCoordinator()
+    app = create_app(context=ctx)
+    with TestClient(app) as client:
+        response = client.get("/status")
+    body = response.json()
+    assert body["market_selection"]["equity_session"] == "EQUITY_REGULAR"
+    assert body["watchlist"]["active"][0]["symbol"] == "BTC-PERP"
+    assert body["watchlist"]["paused"][0]["reasons"][0]["code"] == "SESSION_CLOSED"
+    # selection/watchlist outputs never carry direction or trade terms
+    # (the universe section legitimately exposes exchange metadata like
+    # max_leverage limits - that is instrument metadata, not a trade parameter)
+    import json
+
+    selection_blob = json.dumps(
+        {"selection": body["market_selection"], "watchlist": body["watchlist"]}
+    ).upper()
+    for term in ("LONG", "SHORT", '"ENTRY"', '"STOP"', "LEVERAGE", "TARGET"):
+        assert term not in selection_blob
+
+
+def test_dashboard_includes_selection_summary() -> None:
+    ctx = make_ctx()
+    ctx.selection = FakeSelectionCoordinator()
+    app = create_app(context=ctx)
+    with TestClient(app) as client:
+        body = client.get("/dashboard").json()
+    assert body["market_selection"]["summary"]["evaluated"] == 2
+
+
+def test_health_reports_selection_disabled() -> None:
+    ctx = make_ctx()
+    ctx.settings.selection.__dict__["enabled"] = False
+    app = create_app(context=ctx)
+    with TestClient(app) as client:
+        body = client.get("/health").json()
+    assert body["components"]["market_selection"] == "disabled"
