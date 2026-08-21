@@ -1,0 +1,5 @@
+"""Entry trigger monitoring for WATCHING signals.
+
+Placeholder: implemented in phase 10. Intentionally empty so no later-phase
+features are built prematurely (see ARBEITSWEISE in the project brief).
+"""
