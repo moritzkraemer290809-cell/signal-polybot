@@ -80,6 +80,8 @@ class InstrumentTracker:
     last_bbo: ev.BboUpdate | None = None
     #: 24h volume in quote asset (pUSD) from the public statistics channel.
     last_volume_24h: Decimal | None = None
+    last_next_funding_at: datetime | None = None
+    last_funding_rate_at: datetime | None = None
     last_stats_at: datetime | None = None
     last_resync_request_at: float | None = None
     resync_requests: int = 0
@@ -304,6 +306,8 @@ class MarketDataService:
             tracker.last_mark_price = ticker.mark_price
         if ticker.index_price is not None:
             tracker.last_index_price = ticker.index_price
+        if ticker.next_funding_at is not None:
+            tracker.last_next_funding_at = ticker.next_funding_at
 
         await self._cache.set_ticker(
             tracker.instrument_id,
@@ -322,10 +326,15 @@ class MarketDataService:
             DataSource.WEBSOCKET, Channel.TICKER.value, tracker.symbol, ticker.ts
         )
 
+        funding_changed = (
+            ticker.funding_rate is not None and ticker.funding_rate != tracker.last_funding_rate
+        )
+        if ticker.funding_rate is not None:
+            tracker.last_funding_rate = ticker.funding_rate
+            tracker.last_funding_rate_at = ticker.ts
         if self._buffers is not None:
             self._buffers.ticks.append((tracker.instrument_pk, ticker))
-            if ticker.funding_rate is not None and ticker.funding_rate != tracker.last_funding_rate:
-                tracker.last_funding_rate = ticker.funding_rate
+            if funding_changed and ticker.funding_rate is not None:
                 self._buffers.funding.append(
                     (
                         tracker.instrument_pk,

@@ -168,25 +168,66 @@ def test_telegram_layer_imports_no_strategy_or_market_adapters() -> None:
                     )
 
 
-def test_phase6_generates_no_trade_signals() -> None:
-    """Risk/cost modules must still be pure placeholders: nothing in the
-    codebase computes entries, stops, targets, leverage, sizes or costs.
-    (The phase-8 strategy package produces research candidates only - its own
-    isolation is enforced in test_strategy_isolation below.)"""
+def test_risk_and_cost_layer_isolation() -> None:
+    """Phase-9 risk/costs modules: no Telegram, no market adapters, no
+    network clients, no wallet/order/signing code paths.  They are pure
+    domain/application logic over immutable public-data snapshots."""
+    forbidden_imports = (
+        "app.telegram",
+        "app.adapters",
+        "app.monitoring",
+        "httpx",
+        "websockets",
+        "aiogram",
+    )
+    forbidden_terms = (
+        "wallet",
+        "private_key",
+        "place_order",
+        "create_order",
+        "submit_order",
+        "order_client",
+        "signing",
+    )
+    risk_cost_files = [
+        *sorted((APP_DIR / "risk").rglob("*.py")),
+        *sorted((APP_DIR / "costs").rglob("*.py")),
+    ]
+    assert len(risk_cost_files) > 20
+    for path in risk_cost_files:
+        source = path.read_text()
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            modules: list[str] = []
+            if isinstance(node, ast.Import):
+                modules = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                modules = [node.module]
+            for module in modules:
+                for prefix in forbidden_imports:
+                    assert not module.startswith(prefix), (
+                        f"{path} imports {module!r} - risk/cost isolation violated"
+                    )
+        lowered = source.lower()
+        for term in forbidden_terms:
+            assert term not in lowered, f"{path} contains forbidden term {term!r}"
+
+
+def test_risk_and_cost_layers_claim_no_guarantees() -> None:
+    """No risk/cost source promises profits or guaranteed outcomes."""
+    forbidden_phrases = (
+        "guaranteed profit",
+        "garantierter gewinn",
+        "gewinnwahrscheinlichkeit:",
+        "profit guarantee",
+        "optimal leverage",
+        "optimaler hebel:",
+    )
     for package in ("risk", "costs"):
         for path in sorted((APP_DIR / package).rglob("*.py")):
-            if path.name == "__init__.py":
-                continue
-            tree = ast.parse(path.read_text())
-            non_docstring = [
-                node
-                for node in tree.body
-                if not (isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant))
-                and not isinstance(node, ast.ImportFrom | ast.Import)
-            ]
-            assert non_docstring == [], (
-                f"{path} contains executable code - strategy phases are not unlocked yet"
-            )
+            lowered = path.read_text().lower()
+            for phrase in forbidden_phrases:
+                assert phrase not in lowered, f"{path} contains {phrase!r}"
 
 
 def test_selection_and_session_layer_isolation() -> None:

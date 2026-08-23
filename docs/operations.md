@@ -138,6 +138,37 @@ Korrelations-IDs werden pro Signal-Lifecycle gebunden (ab Phase 10 durchgaengig)
   `STRATEGY_FEATURE_RETENTION_DAYS` (Default 14) aufgeraeumt; Kandidaten,
   Events und Rejections bleiben als Research-Historie erhalten.
 
+## Risk & Cost Research (Phase 9)
+
+- Zustand: `/health` -> `risk` (Risk-/Cost-Subsystem-State, Job-Liveness,
+  aktive Fee Schedule, Plan-Zaehler nach Status, Rejections der letzten
+  Stunde); `/status` -> Modellversionen, Config-Hashes,
+  Fee-Schedule-Version ("assumption only"), letzter Run - ohne
+  Referenzpreise; `/dashboard` -> Plan-Details mit Score-Zerlegung,
+  Reason Codes und klar markierten Modell-Referenzleveln (nur lokal).
+- `RISK_ENGINE_ENABLED=false` deaktiviert das Subsystem vollstaendig.
+- Keine Plaene? `/dashboard` -> `risk.recent_rejections` zeigt die
+  strukturierten Codes (z. B. `MARGIN_MODEL_UNAVAILABLE`,
+  `NET_RR_BELOW_THRESHOLD`, `ORDERBOOK_DEPTH_INSUFFICIENT`). Eine
+  Ablehnung ist ein korrektes, konservatives Ergebnis - kein Fehler.
+- **Fee Schedule**: wird beim ersten Lauf aus der Konfiguration geseedet
+  und aktiviert; Versionen sind immutable. Satzaenderung =>
+  `COST_FEE_SCHEDULE_VERSION` anheben (neue Version, alte bleibt
+  historisch). Die Saetze sind Annahmen und muessen vor Live-Betrieb
+  gegen die offizielle Polymarket-Dokumentation validiert werden.
+- **Margin-Daten fehlen** (haeufig, da oeffentliche Metadaten keine
+  Margin-Raten liefern): Standard ist konservatives Blockieren. Nur wer
+  das explizit will, setzt `RISK_ALLOW_APPROXIMATED_MARGIN_MODEL=true`
+  (+ approx. Raten) - jeder betroffene Plan ist prominent als
+  `APPROXIMATED` markiert.
+- Konfigurationsaenderungen (Risk-/Cost-Settings) aendern die
+  Config-Hashes: bestehende aktive Plaene werden superseded und neu
+  bewertet; Historie bleibt vollstaendig erhalten.
+- Globaler PAUSED-Modus: keine neuen ELIGIBLE-Plaene (`BOT_PAUSED`-
+  Rejections), bestehende Historie bleibt; keine Telegram-Ausgabe.
+- DB-Ausfall: `risk` meldet DEGRADED, unpersistierte Plaene werden nie
+  als Erfolg gemeldet; Prozess, Feed und API laufen weiter.
+
 ## Backup & Recovery
 
 Persistente Daten liegen in den Volumes `polysignal_pgdata` und

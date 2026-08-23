@@ -754,3 +754,181 @@ class SetupRejectionRecord(Base):
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
     )
+
+
+class InstrumentRiskSnapshotRecord(Base):
+    """Public instrument + market state snapshot used by one risk evaluation."""
+
+    __tablename__ = "instrument_risk_snapshots"
+    __table_args__ = (
+        sa.Index("ix_instrument_risk_snapshots_instrument_as_of", "instrument_pk", "as_of"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True)
+    instrument_pk: Mapped[int] = mapped_column(
+        sa.ForeignKey("instruments.id", ondelete="CASCADE"), nullable=False
+    )
+    instrument_id: Mapped[int] = mapped_column(sa.BigInteger, nullable=False, index=True)
+    symbol: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    as_of: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+    snapshot_version: Mapped[str] = mapped_column(sa.String(16), nullable=False)
+    mark_price: Mapped[Decimal | None] = mapped_column(PriceNumeric)
+    max_leverage: Mapped[int | None] = mapped_column(sa.Integer)
+    min_notional: Mapped[Decimal | None] = mapped_column(PriceNumeric)
+    data_quality_status: Mapped[str] = mapped_column(sa.String(24), nullable=False)
+    orderbook_fresh: Mapped[bool] = mapped_column(sa.Boolean, default=False)
+    payload: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+    )
+
+
+class ExecutionAssumptionVersion(Base):
+    """Versioned execution assumptions (administered, immutable per version)."""
+
+    __tablename__ = "execution_assumption_versions"
+
+    id: Mapped[int] = mapped_column(
+        sa.BigInteger().with_variant(sa.Integer(), "sqlite"), primary_key=True, autoincrement=True
+    )
+    version: Mapped[str] = mapped_column(sa.String(48), unique=True, nullable=False)
+    assumptions: Mapped[dict[str, Any]] = mapped_column(JSONVariant, nullable=False)
+    active: Mapped[bool] = mapped_column(sa.Boolean, default=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+    )
+
+
+class CostEstimateRecord(Base):
+    """Persisted conservative cost estimate for one plan evaluation."""
+
+    __tablename__ = "cost_estimates"
+    __table_args__ = (sa.Index("ix_cost_estimates_instrument_as_of", "instrument_pk", "as_of"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True)
+    plan_id: Mapped[uuid.UUID | None] = mapped_column(sa.Uuid, index=True)
+    candidate_id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, nullable=False, index=True)
+    instrument_pk: Mapped[int] = mapped_column(
+        sa.ForeignKey("instruments.id", ondelete="CASCADE"), nullable=False
+    )
+    symbol: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    as_of: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+    cost_model_name: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    cost_model_version: Mapped[str] = mapped_column(sa.String(32), nullable=False, index=True)
+    cost_config_hash: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    fee_schedule_version: Mapped[str] = mapped_column(sa.String(48), nullable=False, index=True)
+    execution_assumption_version: Mapped[str] = mapped_column(sa.String(48), nullable=False)
+    total_cost: Mapped[Decimal | None] = mapped_column(PriceNumeric)
+    cost_to_risk_pct: Mapped[Decimal | None] = mapped_column(PriceNumeric)
+    net_rr_primary: Mapped[Decimal | None] = mapped_column(PriceNumeric)
+    payload: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+    )
+
+
+class RiskPlanRecord(Base):
+    """Current state of a signal eligibility plan (history in events)."""
+
+    __tablename__ = "risk_plans"
+    __table_args__ = (
+        sa.Index("ix_risk_plans_instrument_status", "instrument_pk", "status"),
+        sa.Index("ix_risk_plans_dedupe", "dedupe_key"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True)
+    candidate_id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, nullable=False, index=True)
+    instrument_pk: Mapped[int] = mapped_column(
+        sa.ForeignKey("instruments.id", ondelete="CASCADE"), nullable=False
+    )
+    instrument_id: Mapped[int] = mapped_column(sa.BigInteger, nullable=False, index=True)
+    symbol: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    asset_class: Mapped[str] = mapped_column(sa.String(16), nullable=False)
+    candidate_type: Mapped[str] = mapped_column(sa.String(40), nullable=False)
+    direction: Mapped[str] = mapped_column(sa.String(8), nullable=False)
+    status: Mapped[str] = mapped_column(sa.String(24), nullable=False, index=True)
+    eligibility_score: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    net_rr_primary: Mapped[Decimal | None] = mapped_column(PriceNumeric)
+    cost_to_risk_pct: Mapped[Decimal | None] = mapped_column(PriceNumeric)
+    risk_model_name: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    risk_model_version: Mapped[str] = mapped_column(sa.String(32), nullable=False, index=True)
+    risk_config_hash: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    cost_model_version: Mapped[str] = mapped_column(sa.String(32), nullable=False, index=True)
+    cost_config_hash: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    fee_schedule_version: Mapped[str] = mapped_column(sa.String(48), nullable=False, index=True)
+    execution_assumption_version: Mapped[str] = mapped_column(sa.String(48), nullable=False)
+    instrument_snapshot_id: Mapped[uuid.UUID | None] = mapped_column(sa.Uuid)
+    instrument_snapshot_version: Mapped[str] = mapped_column(sa.String(16), nullable=False)
+    strategy_version: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    strategy_config_hash: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    payload: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
+    dedupe_key: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    #: equals dedupe_key while the plan is active (ELIGIBLE), NULL when
+    #: terminal - the unique constraint prevents duplicate active plans.
+    active_key: Mapped[str | None] = mapped_column(sa.String(32), unique=True)
+    as_of: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False, index=True)
+    expiry_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+    )
+
+
+class RiskPlanEvent(Base):
+    """Immutable plan lifecycle history."""
+
+    __tablename__ = "risk_plan_events"
+
+    id: Mapped[int] = mapped_column(
+        sa.BigInteger().with_variant(sa.Integer(), "sqlite"), primary_key=True, autoincrement=True
+    )
+    plan_id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, nullable=False, index=True)
+    event_type: Mapped[str] = mapped_column(sa.String(24), nullable=False)
+    from_status: Mapped[str | None] = mapped_column(sa.String(24))
+    to_status: Mapped[str | None] = mapped_column(sa.String(24))
+    detail: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+    )
+
+
+class RiskPlanRejectionRecord(Base):
+    """Aggregated risk-stage rejections (per candidate/code/time bucket)."""
+
+    __tablename__ = "risk_plan_rejections"
+    __table_args__ = (
+        sa.UniqueConstraint(
+            "candidate_key",
+            "primary_code",
+            "window_bucket",
+            "risk_model_version",
+            name="uq_risk_plan_rejections_identity",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        sa.BigInteger().with_variant(sa.Integer(), "sqlite"), primary_key=True, autoincrement=True
+    )
+    candidate_id: Mapped[uuid.UUID | None] = mapped_column(sa.Uuid, index=True)
+    #: string form of candidate_id (or "-") for the unique identity above
+    candidate_key: Mapped[str] = mapped_column(sa.String(40), nullable=False)
+    instrument_pk: Mapped[int] = mapped_column(
+        sa.ForeignKey("instruments.id", ondelete="CASCADE"), nullable=False
+    )
+    symbol: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    primary_code: Mapped[str] = mapped_column(sa.String(48), nullable=False, index=True)
+    codes: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
+    detail: Mapped[str | None] = mapped_column(sa.Text)
+    count: Mapped[int] = mapped_column(sa.Integer, default=1, nullable=False)
+    first_as_of: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+    last_as_of: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+    window_bucket: Mapped[str] = mapped_column(sa.String(24), nullable=False)
+    risk_model_version: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    risk_config_hash: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    cost_model_version: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    fee_schedule_version: Mapped[str | None] = mapped_column(sa.String(48))
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+    )

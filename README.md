@@ -23,7 +23,8 @@ in eine private Telegram-Gruppe. **Der Nutzer handelt manuell.**
 | 6 | Telegram Delivery Service, persistente Queue, Admin-Kommandos | ✅ |
 | 7 | Market Selection Engine, Session Manager, Kalender, Watchlist | ✅ |
 | 8 | Strategy Research Foundation: Marktstruktur, Features, Regime, Setup-Kandidaten (nur Research, keine Signale) | ✅ |
-| 9+ | Risiko/Kosten, Signal-Lifecycle, Shadow Mode, Backtests | ⏳ geplant |
+| 9 | Risiko-/Kosten-Engine: technische Invalidation, Referenzrahmen, Margin-Plausibilität, Signal-Eligibility-Pläne (nur Research) | ✅ |
+| 10+ | Signal-Lifecycle, Shadow Mode, Backtests | ⏳ geplant |
 
 ## Architekturüberblick
 
@@ -38,6 +39,7 @@ flowchart LR
         ADP["Adapters<br/>(REST-Client, Rate Limiter)"]
         DATA["Data Layer<br/>(Instrument Discovery, Cache)"]
         STRAT["Strategy Research<br/>(Phase 8: Kandidaten, kein Signal)"]
+        RISK["Risk & Cost Research<br/>(Phase 9: Eligibility-Pläne, kein Signal)"]
         MON["Signal Lifecycle & Monitoring<br/>(Phase 10)"]
         API["FastAPI<br/>/health /status /dashboard"]
     end
@@ -50,7 +52,7 @@ flowchart LR
     WS --> ADP
     DATA --> PG
     DATA --> RD
-    DATA --> STRAT --> MON
+    DATA --> STRAT --> RISK --> MON
     MON -.spaeter.-> TGQ["Persistente Delivery Queue"] --> TG
     TGQ <-.Admin-Kommandos.-> TG
     API --> PG
@@ -64,6 +66,7 @@ Schichtenregeln:
 
 Details: [`docs/architecture.md`](docs/architecture.md),
 [`docs/strategy.md`](docs/strategy.md),
+[`docs/risk-and-costs.md`](docs/risk-and-costs.md),
 [`docs/operations.md`](docs/operations.md),
 [`docs/security.md`](docs/security.md)
 
@@ -120,7 +123,8 @@ Alle Parameter, Schwellenwerte und Secrets kommen aus `.env` /
 Environment-Variablen und sind in [`app/config.py`](app/config.py) typisiert.
 Wichtige Gruppen: `APP_*`, `DATABASE_*`, `REDIS_*`, `POLYMARKET_*`,
 `TELEGRAM_*`, `UNIVERSE_*`, `DATA_QUALITY_*`, `MARKET_SELECTION_*`,
-`STRATEGY_*` — siehe kommentierte [`.env.example`](.env.example).
+`STRATEGY_*`, `RISK_*`, `COST_*` — siehe kommentierte
+[`.env.example`](.env.example).
 
 Marktuniversum V1: `AAPL-PERP` (Equity) und `BTC-PERP` (Crypto); weitere Märkte
 nur per Konfiguration. Instrument-IDs werden **nie** fest codiert, sondern per
@@ -132,7 +136,7 @@ Discovery über `/v1/info/instruments` aufgelöst.
 |----------|-------|
 | `GET /health` | Prozess, PostgreSQL, Redis, Telegram-Konfig, WebSocket-Liveness/Subscriptions, kritische Channel-Frische, Anzahl `DATA_STALE`-Assets |
 | `GET /status` | Botzustand (inkl. Kill Switch), Universum, Connection State, Reconnects, invalide Events, Datenqualität pro Instrument, Orderbuch-Resyncs, Buffer-Statistiken |
-| `GET /dashboard` | Kompakte JSON-Übersicht + Metriken + Datenqualität + Strategy-Research-Sektion (Kandidaten/Ablehnungen, mit Disclaimer) |
+| `GET /dashboard` | Kompakte JSON-Übersicht + Metriken + Datenqualität + Strategy-/Risk-Research-Sektionen (Kandidaten, Eligibility-Pläne, Ablehnungen — jeweils mit Research-Disclaimer) |
 
 Ein DB-/Redis-Ausfall degradiert `/health` (503) bzw. liefert `database:
 "unavailable"` in `/status` - der Prozess und der Marktdaten-Feed laufen weiter.
@@ -173,6 +177,30 @@ Ein DB-/Redis-Ausfall degradiert `/health` (503) bzw. liefert `database:
 - Ablehnungen werden mit strukturierten Codes aggregiert persistiert;
   jede Entscheidung ist ueber Strategieversion, Config-Hash und
   Candle-Fenster reproduzierbar. Details: [`docs/strategy.md`](docs/strategy.md).
+
+## Risk & Cost Research (Phase 9)
+
+> **Risk Research - kein Handelssignal. Keine reale Positions- oder
+> Kontodatenbasis.**
+
+- Nimmt ausschließlich **bestätigte** Phase-8-Research-Candidates und prüft
+  konservativ, ob daraus ein interner `SignalEligibilityPlan` entstehen
+  kann: technische Invalidation (Struktur-Level + BPS/ATR-Buffer),
+  Referenz-Entry-Zone (Taker-konservativ aus frischen BBO-Daten),
+  technische Referenz-Targets (nie künstlich erzeugt), hypothetische
+  Referenzpositionsgröße gegen ein **virtuelles** Referenzkonto.
+- Konservative Leverage-Eignung mit hartem V1-Deckel **3x**; Isolated-
+  Margin-Forschungsmodell, das ohne öffentliche Margin-Daten blockiert
+  (approximiertes Modell nur per explizitem Opt-in, prominent als
+  `APPROXIMATED` markiert); Liquidationspuffer als konservative
+  Modellprüfung — kein Garant gegen Liquidation.
+- Verpflichtende Kosten-Engine auf Notionalbasis: versionierte
+  Fee-Schedule-Annahmen (vor Live-Betrieb gegen die offizielle
+  Polymarket-Dokumentation zu validieren), Taker-Execution-Annahmen mit
+  Stop-Stress, Orderbuch-VWAP-Slippage, konservative Funding-Projektion
+  (Funding nie als Ertrag) und Netto-R:R (Default-Minimum 1.8, Kostenanteil
+  am Risiko max. 15 %). Nichterfüllung erzeugt strukturierte
+  `RiskPlanRejection`s. Details: [`docs/risk-and-costs.md`](docs/risk-and-costs.md).
 
 ## Telegram (Phase 6)
 

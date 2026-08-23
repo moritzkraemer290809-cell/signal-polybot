@@ -117,6 +117,15 @@ async def status(request: Request) -> dict[str, Any]:
     else:
         strategy_status = "disabled"
 
+    risk = getattr(ctx, "risk", None)
+    risk_status: dict[str, Any] | str
+    if risk is not None:
+        risk_status = await risk.status_stats()
+    elif settings.risk.engine_enabled:
+        risk_status = "enabled_not_initialized"
+    else:
+        risk_status = "disabled"
+
     telegram_subsystem = getattr(ctx, "telegram", None)
     telegram: dict[str, Any] | str
     if telegram_subsystem is not None:
@@ -146,4 +155,5 @@ async def status(request: Request) -> dict[str, Any]:
         "market_selection": selection_status,
         "watchlist": watchlist,
         "strategy": strategy_status,
+        "risk": risk_status,
     }

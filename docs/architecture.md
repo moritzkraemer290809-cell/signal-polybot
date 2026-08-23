@@ -11,7 +11,7 @@ app/
 ├── data/            # Instrument Discovery, Market Cache (Redis), spaeter Candle/Orderbook-Services
 ├── repositories/    # SQLAlchemy ORM + Repositories (einzige DB-Zugriffsschicht)
 ├── strategy/        # Phase 8 – regelbasierte Research-Engine: purer Kern (Features/Regime/Regeln/Score) + Context-Builder/Feature-Store als Adapter; kein LLM-Einfluss
-├── costs/ risk/     # Phase 9 – identisch fuer Live/Shadow/Backtest
+├── risk/ costs/     # Phase 9 – Eligibility-Plaene und Kostenmodell; purer Kern + Context-Builder; identisch fuer spaetere Shadow-/Backtest-Nutzung
 ├── monitoring/      # Phase 7/10 – Sessions, Signal-Lifecycle
 ├── jobs/            # periodische Tasks (Universe Refresh aktiv; weitere folgen)
 ├── api/             # FastAPI: /health, /status, /dashboard
@@ -388,3 +388,48 @@ Kernentscheidungen:
 `strategy_version` (+ `config_hash` wo relevant); `setup_candidate_events`
 ist die unveraenderliche Lifecycle-Historie. Snapshot-Retention:
 `STRATEGY_FEATURE_RETENTION_DAYS`.
+
+
+## Risk & Cost Research (Phase 9)
+
+Nur bestaetigte Phase-8-Candidates werden zu internen
+`SignalEligibilityPlan`s oder strukturierten `RiskPlanRejection`s -
+keine Trade-Signale, keine Orders, keine Kontodaten (Isolationstest).
+Fachliche Details: [`docs/risk-and-costs.md`](risk-and-costs.md).
+
+```mermaid
+flowchart LR
+    CAND["CONFIRMED SetupCandidates<br/>(Phase 8)"]
+    RJOB["RiskPlanEvaluationJob<br/>20s · Overlap-Lock ·<br/>nur neue/aktualisierte Candidates"]
+    RCTX["RiskPlanEvaluationContextBuilder<br/>Instrument-Metadaten · Book/BBO ·<br/>Funding · Levels · ATR · Fee Schedule"]
+    RENG["evaluate_candidate (pur)<br/>Gates → Entry/Invalidation/Targets →<br/>Sizing → Leverage/Margin → Kosten → Score"]
+    RDB[("instrument_risk_snapshots ·<br/>fee_schedule_versions · cost_estimates ·<br/>risk_plans(+events) · risk_plan_rejections")]
+    RAPI["/health · /status · /dashboard<br/>('Risk Research - kein Handelssignal')"]
+
+    CAND --> RJOB --> RCTX --> RENG --> RDB
+    RJOB --> RAPI
+```
+
+Kernentscheidungen:
+
+- **Purer Kern** ohne I/O ueber immutable Snapshots; der Context-Builder
+  ist der einzige Risk-Adapter mit Repository-/Service-Zugriff und macht
+  keine REST-/WS-Calls.
+- **Konservativ-by-default**: fehlende Instrument-/Margin-/Fee-/Funding-
+  Daten blockieren strukturiert, statt geschaetzt zu werden; das
+  approximierte Margin-Modell ist reines Opt-in und markiert.
+- **Versionierung**: Risk-/Cost-Modellversionen + deterministische
+  Config-Hashes + Fee-Schedule-/Execution-Assumption-/Snapshot-Versionen
+  auf jeder Zeile; Konfigurationsaenderungen erzeugen neue Plaene
+  (Supersede), nie Umschreibungen.
+- **Race-sicherer Dedupe** via `active_key`-Unique (Phase-8-Muster),
+  levelbasierter Dedupe-Key gegen Quote-Rauschen, aggregierte Rejections
+  pro Zeitfenster-Bucket.
+
+### Persistenz (Alembic `0005`)
+
+6 neue Tabellen: `instrument_risk_snapshots`,
+`execution_assumption_versions`, `cost_estimates`, `risk_plans`,
+`risk_plan_events`, `risk_plan_rejections`; dazu wird die bestehende
+`fee_schedule_versions`-Tabelle (Migration `0001`) erstmals aktiv
+verwendet (administrierter Seed + Aktivierung, Versionen immutable).

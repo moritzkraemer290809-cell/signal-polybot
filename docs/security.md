@@ -96,6 +96,29 @@
 - API-Sektionen des Strategie-Layers geben weder Secrets noch Konfigurations-
   Rohwerte aus (nur Name, Version, Hashes, Zaehler, Research-Felder).
 
+## Risk-/Kosten-Layer (Phase 9)
+
+- Erzeugt ausschliesslich interne Research-Eignungsbewertungen: **keine
+  Orders, kein Live-Trading, keine Schluesselverwahrung, keine
+  Signatur-/Transaktionspfade, keine privaten Account-/Balance-/
+  Positionsdaten und keine echte Kontogroesse** - das virtuelle
+  Referenzkonto ist reine Konfiguration. Ein AST-Isolationstest verbietet
+  Risk-/Costs-Modulen Telegram-, Adapter- und Netzwerk-Imports sowie
+  Order-/Wallet-Terminologie.
+- Keine Telegram-Trade-Signale in Phase 9; keine Nachricht enthaelt
+  Entry, Stop, Take Profit oder Hebel. `/status` gibt keine
+  Referenzpreise aus; Modell-Level erscheinen nur lokal im Dashboard und
+  sind als hypothetische Modellwerte markiert.
+- Konservativ-by-default: fehlende Instrument-, Margin-, Fee-, Funding-
+  oder Orderbuchdaten blockieren mit strukturiertem Code statt geschaetzt
+  zu werden; das approximierte Margin-Modell existiert nur hinter einem
+  expliziten Opt-in und wird prominent gekennzeichnet.
+- Keine Formulierung verspricht Rendite, Trefferquote oder einen
+  "optimalen Hebel"; der Eligibility Score ist ausdruecklich keine
+  Gewinnwahrscheinlichkeit (testseitig abgesichert).
+- Fee Schedules stammen ausschliesslich aus administrierter
+  Konfiguration/Seed/Migration - nie aus unsicheren Laufzeitquellen.
+
 ## Betriebssicherheit
 
 - Gewichteter Rate Limiter unterhalb des dokumentierten Polymarket-Budgets.

@@ -605,6 +605,271 @@ class StrategySettings(_EnvSettings):
         return value
 
 
+class CostSettings(_EnvSettings):
+    """Cost engine configuration (phase 9).
+
+    Rate conventions: fields ending in ``_rate`` are decimal fractions
+    (0.0005 = 0.05 %); fields ending in ``_bps`` are basis points; fields
+    ending in ``_pct`` are percent points (15.0 = 15 %).  Conservative
+    defaults; invalid values fail loudly at startup.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="COST_", env_file=str(ENV_FILE), extra="ignore")
+
+    engine_enabled: bool = Field(default=True, validation_alias=AliasChoices("COST_ENGINE_ENABLED"))
+    model_name: str = "conservative_costs_v1"
+    model_version: str = "1.0.0"
+
+    # --- fee schedule (assumption, validate against official docs) ---------
+    fee_schedule_source: str = "local_config_assumption"
+    fee_schedule_version: str = "polymarket-perps-assumed-1"
+    assumed_fee_tier: str = "default"
+    #: decimal fraction, e.g. 0.0002 = 0.02 %
+    default_maker_fee_rate: float = 0.0002
+    #: decimal fraction, e.g. 0.0007 = 0.07 %
+    default_taker_fee_rate: float = 0.0007
+    require_active_fee_schedule: bool = True
+
+    # --- execution assumptions --------------------------------------------
+    execution_assumption_version: str = "taker-conservative-1"
+    entry_execution_mode: Literal["ENTRY_TAKER", "ENTRY_MAKER"] = "ENTRY_TAKER"
+    target_execution_mode: Literal["TARGET_TAKER", "TARGET_MAKER"] = "TARGET_TAKER"
+    invalidation_execution_mode: Literal["STOP_TAKER", "STOP_STRESS_TAKER"] = "STOP_STRESS_TAKER"
+
+    # --- slippage / orderbook ----------------------------------------------
+    slippage_enabled: bool = True
+    require_fresh_orderbook: bool = True
+    orderbook_max_levels: int = 25
+    orderbook_max_distance_bps: float = 50.0
+    entry_slippage_stress_bps: float = 2.0
+    target_slippage_stress_bps: float = 2.0
+    invalidation_slippage_stress_bps: float = 8.0
+    #: percent points: slippage cost may consume at most this share of risk
+    max_slippage_to_risk_pct: float = 8.0
+
+    # --- funding -------------------------------------------------------------
+    funding_enabled: bool = True
+    require_funding_data: bool = True
+    funding_lookback_hours: int = 72
+    #: conservative percentile of the adverse funding-rate history (0..100)
+    funding_conservative_percentile: float = 75.0
+    #: technical, conservative research hold assumption - not a forecast
+    reference_hold_minutes: int = 240
+    equity_overnight_blocked: bool = True
+    #: extra buffer applied when funding data is thin (bps of notional)
+    funding_buffer_bps: float = 1.0
+    #: assumed funding interval when the instrument does not specify one
+    default_funding_interval_hours: float = 1.0
+
+    #: additional flat conservative cost buffer (bps of notional, per plan)
+    conservative_cost_buffer_bps: float = 1.0
+
+    @field_validator("default_maker_fee_rate", "default_taker_fee_rate")
+    @classmethod
+    def _validate_fee_rates(cls, value: float) -> float:
+        if not 0.0 <= value <= 0.05:
+            raise ValueError("fee rates are decimal fractions and must be within 0..0.05")
+        return value
+
+    @field_validator("funding_conservative_percentile")
+    @classmethod
+    def _validate_funding_percentile(cls, value: float) -> float:
+        if not 50.0 <= value <= 100.0:
+            raise ValueError("funding_conservative_percentile must be within 50..100")
+        return value
+
+    @field_validator("orderbook_max_levels", "reference_hold_minutes", "funding_lookback_hours")
+    @classmethod
+    def _validate_positive_ints(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("value must be positive")
+        return value
+
+    @field_validator(
+        "orderbook_max_distance_bps",
+        "entry_slippage_stress_bps",
+        "target_slippage_stress_bps",
+        "invalidation_slippage_stress_bps",
+        "max_slippage_to_risk_pct",
+        "funding_buffer_bps",
+        "conservative_cost_buffer_bps",
+        "default_funding_interval_hours",
+    )
+    @classmethod
+    def _validate_non_negative(cls, value: float) -> float:
+        if value < 0:
+            raise ValueError("value must be non-negative")
+        return value
+
+
+class RiskSettings(_EnvSettings):
+    """Risk engine configuration (phase 9).
+
+    All monetary values are hypothetical research references in pUSD - the
+    engine never reads real account, balance or position data.  Rate
+    conventions: ``_pct`` fields are percent points (0.5 = 0.5 %), ``_bps``
+    fields are basis points, ``_rate`` fields are decimal fractions.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="RISK_", env_file=str(ENV_FILE), extra="ignore")
+
+    engine_enabled: bool = Field(default=True, validation_alias=AliasChoices("RISK_ENGINE_ENABLED"))
+    model_name: str = "conservative_eligibility_v1"
+    model_version: str = "1.0.0"
+    plan_evaluation_refresh_seconds: float = 20.0
+    max_concurrent_evaluations: int = 4
+    require_confirmed_candidate: bool = True
+    require_healthy_data: bool = True
+    allow_degraded_data: bool = False
+    require_fresh_orderbook: bool = True
+    plan_dedupe_seconds: float = 900.0
+    max_active_plans_per_instrument: int = 2
+    plan_expiry_seconds: float = 1800.0
+    #: identical rejections (candidate+code) aggregate within this window
+    rejection_persist_seconds: float = 300.0
+    eligibility_min_score: int = 75
+
+    # --- virtual reference account and technical risk ----------------------
+    #: hypothetical reference account in pUSD - never a real balance
+    virtual_reference_account_pusd: float = 10_000.0
+    #: percent points of the virtual account risked per plan (0.5 = 0.5 %)
+    reference_risk_per_plan_pct: float = 0.5
+    min_distance_bps: float = 15.0
+    max_distance_bps: float = 400.0
+    min_distance_atr_multiple: float = 0.5
+    max_distance_atr_multiple: float = 4.0
+    invalidation_buffer_bps: float = 5.0
+    invalidation_buffer_atr_multiple: float = 0.25
+    #: minimum relevance (0..1) a level needs to qualify as reference target
+    target_min_relevance_score: float = 0.3
+    #: entry may not chase further than this beyond the technical zone
+    max_entry_chase_bps: float = 20.0
+    max_reference_notional_pusd: float = 50_000.0
+    #: hard V1 research cap - values above 3 are rejected at startup
+    max_reference_leverage: float = 3.0
+    min_net_rr: float = 1.8
+    #: percent points: total costs may consume at most this share of risk
+    max_cost_to_risk_pct: float = 15.0
+
+    # --- margin / liquidation ----------------------------------------------
+    require_instrument_margin_data: bool = True
+    allow_approximated_margin_model: bool = False
+    #: decimal fraction, only used by the opt-in approximated model
+    approx_initial_margin_rate: float = 0.34
+    #: decimal fraction, only used by the opt-in approximated model
+    approx_maintenance_margin_rate: float = 0.1
+    min_liquidation_buffer_bps: float = 150.0
+    min_liquidation_buffer_atr_multiple: float = 1.0
+    margin_stress_buffer_bps: float = 50.0
+    isolated_margin_only: bool = True
+
+    # --- eligibility score ---------------------------------------------------
+    #: weights must sum to exactly 100
+    eligibility_score_weights_json: dict[str, int] = Field(
+        default_factory=lambda: {
+            "invalidation_quality": 20,
+            "target_quality": 15,
+            "net_rr": 25,
+            "executability": 15,
+            "cost_quality": 10,
+            "margin_buffer": 10,
+            "data_confidence": 5,
+        }
+    )
+    symbol_overrides_json: dict[str, dict[str, float | bool | int]] = Field(default_factory=dict)
+    asset_class_overrides_json: dict[str, dict[str, float | bool | int]] = Field(
+        default_factory=dict
+    )
+
+    @field_validator("eligibility_score_weights_json")
+    @classmethod
+    def _validate_weights(cls, value: dict[str, int]) -> dict[str, int]:
+        expected = {
+            "invalidation_quality",
+            "target_quality",
+            "net_rr",
+            "executability",
+            "cost_quality",
+            "margin_buffer",
+            "data_confidence",
+        }
+        if set(value) != expected:
+            raise ValueError(f"eligibility weights must define exactly {sorted(expected)}")
+        total = sum(value.values())
+        if total != 100:
+            raise ValueError(f"eligibility weights must sum to 100, got {total}")
+        if any(weight < 0 for weight in value.values()):
+            raise ValueError("eligibility weights must be non-negative")
+        return value
+
+    @field_validator("max_reference_leverage")
+    @classmethod
+    def _validate_leverage_cap(cls, value: float) -> float:
+        if not 1.0 <= value <= 3.0:
+            raise ValueError("max_reference_leverage is hard-capped to 1..3 in V1")
+        return value
+
+    @field_validator("eligibility_min_score")
+    @classmethod
+    def _validate_min_score(cls, value: int) -> int:
+        if not 0 <= value <= 100:
+            raise ValueError("eligibility_min_score must be within 0..100")
+        return value
+
+    @field_validator("reference_risk_per_plan_pct")
+    @classmethod
+    def _validate_risk_pct(cls, value: float) -> float:
+        if not 0.0 < value <= 5.0:
+            raise ValueError("reference_risk_per_plan_pct (percent points) must be in (0, 5]")
+        return value
+
+    @field_validator("max_cost_to_risk_pct")
+    @classmethod
+    def _validate_cost_pct(cls, value: float) -> float:
+        if not 0.0 < value <= 100.0:
+            raise ValueError("max_cost_to_risk_pct must be in (0, 100]")
+        return value
+
+    @field_validator("approx_initial_margin_rate", "approx_maintenance_margin_rate")
+    @classmethod
+    def _validate_margin_rates(cls, value: float) -> float:
+        if not 0.0 < value < 1.0:
+            raise ValueError("margin rates are decimal fractions and must be in (0, 1)")
+        return value
+
+    @field_validator("virtual_reference_account_pusd", "max_reference_notional_pusd")
+    @classmethod
+    def _validate_positive_amounts(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("reference amounts must be positive")
+        return value
+
+    @field_validator("min_net_rr")
+    @classmethod
+    def _validate_min_rr(cls, value: float) -> float:
+        if value < 1.0:
+            raise ValueError("min_net_rr below 1.0 is not a conservative configuration")
+        return value
+
+    @field_validator(
+        "min_distance_bps",
+        "max_distance_bps",
+        "min_distance_atr_multiple",
+        "max_distance_atr_multiple",
+        "invalidation_buffer_bps",
+        "invalidation_buffer_atr_multiple",
+        "min_liquidation_buffer_bps",
+        "min_liquidation_buffer_atr_multiple",
+        "margin_stress_buffer_bps",
+        "max_entry_chase_bps",
+    )
+    @classmethod
+    def _validate_non_negative(cls, value: float) -> float:
+        if value < 0:
+            raise ValueError("value must be non-negative")
+        return value
+
+
 class Settings(BaseModel):
     """Aggregated, fully typed application configuration."""
 
@@ -623,6 +888,8 @@ class Settings(BaseModel):
     crypto_sessions: CryptoSessionSettings = Field(default_factory=CryptoSessionSettings)
     thresholds: SelectionThresholdSettings = Field(default_factory=SelectionThresholdSettings)
     strategy: StrategySettings = Field(default_factory=StrategySettings)
+    risk: RiskSettings = Field(default_factory=RiskSettings)
+    costs: CostSettings = Field(default_factory=CostSettings)
 
 
 @lru_cache(maxsize=1)

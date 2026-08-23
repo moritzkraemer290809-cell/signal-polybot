@@ -210,6 +210,13 @@ Regime-Regeln, Dedupe/Expiry, Event-Risk-Fenster). Ungueltige Kombinationen
 (Gewichtssumme != 100, fehlende Pflicht-Timeframes, Perzentile ausserhalb
 0-100) brechen den Start ab - niemals stillschweigend gelockerte Regeln.
 
+## Weiterverarbeitung (Phase 9)
+
+Bestaetigte Kandidaten (`CONFIRMED`) sind der einzige Input der
+Risk-/Kosten-Engine (Phase 9), die daraus interne Eligibility-Plaene oder
+strukturierte Ablehnungen erzeugt - weiterhin ohne Trade-Signale. Details:
+[`docs/risk-and-costs.md`](risk-and-costs.md).
+
 ## Monitoring
 
 `/health` -> `strategy` (Subsystem-State, Job-Liveness, aktive Kandidaten,

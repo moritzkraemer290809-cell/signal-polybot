@@ -179,3 +179,33 @@ class FeatureRepository:
         async with self._session_factory() as session:
             value = await session.execute(sa.select(sa.func.count()).select_from(FeatureSnapshot))
             return int(value.scalar_one())
+
+    async def recent_swings(
+        self, instrument_pk: int, timeframe: str, limit: int = 20
+    ) -> list[SwingPoint]:
+        async with self._session_factory() as session:
+            rows = await session.execute(
+                sa.select(SwingPoint)
+                .where(
+                    SwingPoint.instrument_pk == instrument_pk,
+                    SwingPoint.timeframe == timeframe,
+                )
+                .order_by(SwingPoint.confirmed_at.desc(), SwingPoint.id.desc())
+                .limit(limit)
+            )
+            return list(rows.scalars().all())
+
+    async def recent_liquidity_levels(
+        self, instrument_pk: int, timeframe: str, limit: int = 30
+    ) -> list[LiquidityLevelRecord]:
+        async with self._session_factory() as session:
+            rows = await session.execute(
+                sa.select(LiquidityLevelRecord)
+                .where(
+                    LiquidityLevelRecord.instrument_pk == instrument_pk,
+                    LiquidityLevelRecord.timeframe == timeframe,
+                )
+                .order_by(LiquidityLevelRecord.created_at.desc(), LiquidityLevelRecord.id.desc())
+                .limit(limit)
+            )
+            return list(rows.scalars().all())

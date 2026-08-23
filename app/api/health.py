@@ -73,6 +73,14 @@ async def health(request: Request, response: Response) -> dict[str, Any]:
     else:
         strategy_status = "disabled"
 
+    risk = getattr(ctx, "risk", None)
+    if risk is not None:
+        risk_status: dict[str, Any] | str = await risk.health_stats()
+    elif ctx.settings.risk.engine_enabled:
+        risk_status = "enabled_not_initialized"
+    else:
+        risk_status = "disabled"
+
     components = {
         "process": "ok",
         "postgres": "ok" if db_ok else "unavailable",
@@ -82,6 +90,7 @@ async def health(request: Request, response: Response) -> dict[str, Any]:
         "instrument_discovery": "ok" if last_refresh is not None else "pending",
         "market_selection": selection_status,
         "strategy": strategy_status,
+        "risk": risk_status,
     }
     healthy = db_ok and redis_ok
     if not healthy:

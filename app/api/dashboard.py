@@ -55,6 +55,10 @@ async def dashboard(request: Request) -> dict[str, Any]:
     strategy_dashboard: dict[str, Any] | None = None
     if strategy is not None:
         strategy_dashboard = await strategy.dashboard_details()
+    risk = getattr(ctx, "risk", None)
+    risk_dashboard: dict[str, Any] | None = None
+    if risk is not None:
+        risk_dashboard = await risk.dashboard_details()
     return {
         "enabled_markets": enabled_markets,
         "open_signals": open_signals,
@@ -62,5 +66,6 @@ async def dashboard(request: Request) -> dict[str, Any]:
         "telegram_deliveries": deliveries,
         "market_selection": selection_dashboard,
         "strategy": strategy_dashboard,
+        "risk": risk_dashboard,
         "metrics": metrics.snapshot(),
     }

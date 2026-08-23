@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -46,3 +48,15 @@ class FundingRateRepository:
                 written += 1
             await session.commit()
         return written
+
+    async def recent_rates(
+        self, instrument_pk: int, since: datetime
+    ) -> list[tuple[datetime, float]]:
+        """(ts, rate) pairs since the cutoff, oldest first - public data."""
+        async with self._session_factory() as session:
+            rows = await session.execute(
+                sa.select(FundingRate.ts, FundingRate.funding_rate)
+                .where(FundingRate.instrument_pk == instrument_pk, FundingRate.ts >= since)
+                .order_by(FundingRate.ts)
+            )
+            return [(ts, float(rate)) for ts, rate in rows.all()]
