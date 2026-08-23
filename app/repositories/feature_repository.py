@@ -209,3 +209,22 @@ class FeatureRepository:
                 .limit(limit)
             )
             return list(rows.scalars().all())
+
+    async def structure_events_since(
+        self, instrument_pk: int, since: datetime, limit: int = 50
+    ) -> list[StructureEventRecord]:
+        """Structure events confirmed at/after ``since`` (all timeframes)."""
+        async with self._session_factory() as session:
+            rows = await session.execute(
+                sa.select(StructureEventRecord)
+                .where(
+                    StructureEventRecord.instrument_pk == instrument_pk,
+                    StructureEventRecord.confirm_close_time >= since,
+                )
+                .order_by(
+                    StructureEventRecord.confirm_close_time.desc(),
+                    StructureEventRecord.id.desc(),
+                )
+                .limit(limit)
+            )
+            return list(rows.scalars().all())

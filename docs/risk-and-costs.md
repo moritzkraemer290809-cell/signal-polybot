@@ -198,3 +198,13 @@ Handelssignal.". Metriken: `risk.plan_evaluations_total/skipped/failed`,
 `risk.margin_model_rejections`, `risk.liquidation_buffer_rejections`,
 `risk.net_rr_bucket.*`, `risk.cost_to_risk_bucket.*`,
 `risk.plan_dedupe_suppressed`, `risk.plan_evaluation_duration_seconds`.
+
+## Uebergabe an Phase 10
+
+ELIGIBLE-Plaene sind der einzige Eingang des Internal Signal Lifecycle
+(Phase 10): jeder Plan durchlaeuft dort eigene Admission-Gates und wird -
+falls zugelassen - als internes Research-Signal ueberwacht. Die
+Referenzwerte des Plans werden dabei als unveraenderliche Snapshot-Felder
+kopiert; ein neuer/geaenderter Plan ersetzt nie ein laufendes Signal in
+place, sondern supersedet es (neues Signal nur ueber eine eigene
+Admission). Details: [`docs/signal-lifecycle.md`](signal-lifecycle.md).

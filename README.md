@@ -202,6 +202,32 @@ Ein DB-/Redis-Ausfall degradiert `/health` (503) bzw. liefert `database:
   am Risiko max. 15 %). Nichterfüllung erzeugt strukturierte
   `RiskPlanRejection`s. Details: [`docs/risk-and-costs.md`](docs/risk-and-costs.md).
 
+## Internal Signal Lifecycle (Phase 10)
+
+> **Internal Research Lifecycle - kein Handelssignal, keine reale
+> Position.** Keine Order, kein Fill, keine Telegram-Ausgabe.
+
+- Uebernimmt ELIGIBLE-Plaene der Phase 9 nur durch harte Admission-Gates
+  (Plan/Candidate frisch & bestaetigt, Watchlist aktiv, Session erlaubt,
+  Datenqualitaet & Orderbuch frisch, Dedupe, Limit je Instrument) in eine
+  **deterministische State Machine mit 15 Zustaenden** (explizite
+  Uebergangskarte, 6 terminale Zustaende, `PAUSED` als dokumentiert
+  ruhender Zustand).
+- Entry-, Invalidations-, Target-, Structure-Exit-, Session-, Expiry-,
+  Supersede- und Datenqualitaets-Monitoring ausschliesslich ueber
+  konservative oeffentliche Referenzen (Mark/BBO/GESCHLOSSENE 5m-Kerzen -
+  nie Last-Preis allein, nie stale Daten); kerzenbasierte Bestaetigungen
+  tragen explizite Approximations-Flags und werden **nie als Fill
+  deklariert**.
+- Pro Zyklus gewinnt genau EIN finaler Zustand ueber streng distinkte
+  Prioritaeten (`DATA_INVALID` > `INVALIDATED` > … > `INFO`); ein Target
+  kann eine gleichzeitige Invalidation nie ueberstimmen.
+- Robust gegen Doppelverarbeitung und Neustart: `active_key`-Dedupe,
+  Optimistic Locking ueber `state_version`, idempotente Events, Leases mit
+  Crash-Recovery. `SIGNAL_LIFECYCLE_TELEGRAM_OUTPUT_ENABLED=true` wird vom
+  Konfig-Validator hart abgelehnt. Details:
+  [`docs/signal-lifecycle.md`](docs/signal-lifecycle.md).
+
 ## Telegram (Phase 6)
 
 - `TELEGRAM_ENABLED=false` ist der sichere Default; ohne Token/Gruppen-ID

@@ -932,3 +932,158 @@ class RiskPlanRejectionRecord(Base):
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
     )
+
+
+class SignalLifecycleRecord(Base):
+    """Current state of an internal research lifecycle signal.
+
+    History lives in signal_lifecycle_events; technical reference prices are
+    immutable snapshot fields for local monitoring/dashboard only - never
+    Telegram output in phase 10."""
+
+    __tablename__ = "signal_lifecycles"
+    __table_args__ = (
+        sa.Index("ix_signal_lifecycles_instrument_state", "instrument_pk", "state"),
+        sa.Index("ix_signal_lifecycles_dedupe", "dedupe_key"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True)
+    plan_id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, nullable=False, index=True)
+    candidate_id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, nullable=False, index=True)
+    instrument_pk: Mapped[int] = mapped_column(
+        sa.ForeignKey("instruments.id", ondelete="CASCADE"), nullable=False
+    )
+    instrument_id: Mapped[int] = mapped_column(sa.BigInteger, nullable=False, index=True)
+    symbol: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    asset_class: Mapped[str] = mapped_column(sa.String(16), nullable=False)
+    candidate_type: Mapped[str] = mapped_column(sa.String(40), nullable=False)
+    direction: Mapped[str] = mapped_column(sa.String(8), nullable=False)
+    state: Mapped[str] = mapped_column(sa.String(24), nullable=False, index=True)
+    state_version: Mapped[int] = mapped_column(sa.Integer, nullable=False, default=0)
+    entry_low: Mapped[Decimal] = mapped_column(PriceNumeric, nullable=False)
+    entry_high: Mapped[Decimal] = mapped_column(PriceNumeric, nullable=False)
+    entry_reference_price: Mapped[Decimal] = mapped_column(PriceNumeric, nullable=False)
+    invalidation_price: Mapped[Decimal] = mapped_column(PriceNumeric, nullable=False)
+    target_prices: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
+    entry_trigger: Mapped[str] = mapped_column(sa.String(40), nullable=False)
+    admission_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+    watching_entry_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    entry_confirmed_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    active_research_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    terminal_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    expires_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), nullable=False, index=True
+    )
+    last_evaluated_at: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True), index=True
+    )
+    last_market_data_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    last_data_quality_status: Mapped[str] = mapped_column(sa.String(24), default="UNKNOWN")
+    last_session_state: Mapped[str] = mapped_column(sa.String(32), default="UNKNOWN")
+    last_event_type: Mapped[str | None] = mapped_column(sa.String(24))
+    data_degraded_since: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    reference_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
+    approximation_warnings: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
+    lifecycle_model_name: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    lifecycle_model_version: Mapped[str] = mapped_column(sa.String(32), nullable=False, index=True)
+    lifecycle_config_hash: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    strategy_version: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    risk_model_version: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    cost_model_version: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    fee_schedule_version: Mapped[str] = mapped_column(sa.String(48), nullable=False)
+    dedupe_key: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    #: equals dedupe_key while non-terminal, NULL when terminal - the unique
+    #: constraint prevents duplicate active lifecycle instances under races.
+    active_key: Mapped[str | None] = mapped_column(sa.String(32), unique=True)
+    lease_owner: Mapped[str | None] = mapped_column(sa.String(64))
+    lease_expires_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    correlation_id: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+    )
+
+
+class SignalLifecycleEvent(Base):
+    """Immutable, idempotent lifecycle transition history."""
+
+    __tablename__ = "signal_lifecycle_events"
+
+    id: Mapped[int] = mapped_column(
+        sa.BigInteger().with_variant(sa.Integer(), "sqlite"), primary_key=True, autoincrement=True
+    )
+    signal_id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, nullable=False, index=True)
+    event_type: Mapped[str] = mapped_column(sa.String(24), nullable=False)
+    from_state: Mapped[str | None] = mapped_column(sa.String(24))
+    to_state: Mapped[str | None] = mapped_column(sa.String(24))
+    state_version: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    priority: Mapped[int | None] = mapped_column(sa.Integer)
+    idempotency_key: Mapped[str] = mapped_column(sa.String(64), unique=True, nullable=False)
+    detail: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
+    as_of: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+    )
+
+
+class SignalUpdateRecord(Base):
+    """Aggregated observation stream, separate from state transitions."""
+
+    __tablename__ = "signal_updates"
+
+    id: Mapped[int] = mapped_column(
+        sa.BigInteger().with_variant(sa.Integer(), "sqlite"), primary_key=True, autoincrement=True
+    )
+    signal_id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, nullable=False, index=True)
+    update_type: Mapped[str] = mapped_column(sa.String(32), nullable=False, index=True)
+    idempotency_key: Mapped[str] = mapped_column(sa.String(64), unique=True, nullable=False)
+    detail: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
+    count: Mapped[int] = mapped_column(sa.Integer, default=1, nullable=False)
+    first_as_of: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+    last_as_of: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+    )
+
+
+class SignalLifecycleRejectionRecord(Base):
+    """Aggregated admission/lifecycle rejections."""
+
+    __tablename__ = "signal_lifecycle_rejections"
+    __table_args__ = (
+        sa.UniqueConstraint(
+            "context_key",
+            "primary_code",
+            "window_bucket",
+            "lifecycle_model_version",
+            name="uq_signal_lifecycle_rejections_identity",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        sa.BigInteger().with_variant(sa.Integer(), "sqlite"), primary_key=True, autoincrement=True
+    )
+    plan_id: Mapped[uuid.UUID | None] = mapped_column(sa.Uuid, index=True)
+    candidate_id: Mapped[uuid.UUID | None] = mapped_column(sa.Uuid)
+    signal_id: Mapped[uuid.UUID | None] = mapped_column(sa.Uuid)
+    #: string form of the rejected context (plan or signal id) for the
+    #: unique identity above
+    context_key: Mapped[str] = mapped_column(sa.String(40), nullable=False)
+    instrument_pk: Mapped[int] = mapped_column(
+        sa.ForeignKey("instruments.id", ondelete="CASCADE"), nullable=False
+    )
+    symbol: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    primary_code: Mapped[str] = mapped_column(sa.String(48), nullable=False, index=True)
+    codes: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
+    detail: Mapped[str | None] = mapped_column(sa.Text)
+    count: Mapped[int] = mapped_column(sa.Integer, default=1, nullable=False)
+    first_as_of: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+    last_as_of: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+    window_bucket: Mapped[str] = mapped_column(sa.String(24), nullable=False)
+    lifecycle_model_version: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    lifecycle_config_hash: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+    )

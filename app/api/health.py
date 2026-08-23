@@ -81,6 +81,14 @@ async def health(request: Request, response: Response) -> dict[str, Any]:
     else:
         risk_status = "disabled"
 
+    signals = getattr(ctx, "signals", None)
+    if signals is not None:
+        signals_status: dict[str, Any] | str = await signals.health_stats()
+    elif ctx.settings.signals.lifecycle_enabled:
+        signals_status = "enabled_not_initialized"
+    else:
+        signals_status = "disabled"
+
     components = {
         "process": "ok",
         "postgres": "ok" if db_ok else "unavailable",
@@ -91,6 +99,7 @@ async def health(request: Request, response: Response) -> dict[str, Any]:
         "market_selection": selection_status,
         "strategy": strategy_status,
         "risk": risk_status,
+        "signals": signals_status,
     }
     healthy = db_ok and redis_ok
     if not healthy:

@@ -12,7 +12,7 @@ app/
 ├── repositories/    # SQLAlchemy ORM + Repositories (einzige DB-Zugriffsschicht)
 ├── strategy/        # Phase 8 – regelbasierte Research-Engine: purer Kern (Features/Regime/Regeln/Score) + Context-Builder/Feature-Store als Adapter; kein LLM-Einfluss
 ├── risk/ costs/     # Phase 9 – Eligibility-Plaene und Kostenmodell; purer Kern + Context-Builder; identisch fuer spaetere Shadow-/Backtest-Nutzung
-├── monitoring/      # Phase 7/10 – Sessions, Signal-Lifecycle
+├── signals/         # Phase 10 – Internal Signal Lifecycle: State Machine, Monitore, Engine (pur) + lifecycle_context.py als einziger Adapter
 ├── jobs/            # periodische Tasks (Universe Refresh aktiv; weitere folgen)
 ├── api/             # FastAPI: /health, /status, /dashboard
 └── observability/   # JSON-Logging (Secret-Redaction), Metriken, Alerts
@@ -433,3 +433,55 @@ Kernentscheidungen:
 `risk_plan_events`, `risk_plan_rejections`; dazu wird die bestehende
 `fee_schedule_versions`-Tabelle (Migration `0001`) erstmals aktiv
 verwendet (administrierter Seed + Aktivierung, Versionen immutable).
+
+---
+
+## Internal Signal Lifecycle (Phase 10)
+
+ELIGIBLE-Plaene der Phase 9 werden zu internen, versionierten
+Research-Lifecycles - keine Trade-Signale, keine Orders, keine Fills,
+keine Telegram-Ausgabe (Isolationstest + Konfig-Validator).
+Fachliche Details: [`docs/signal-lifecycle.md`](signal-lifecycle.md).
+
+```mermaid
+flowchart LR
+    PLAN["ELIGIBLE RiskPlans<br/>(Phase 9)"]
+    SJOB["SignalLifecycleMonitorJob<br/>10s · Overlap-Lock · Leases ·<br/>begrenzte Parallelitaet"]
+    SCTX["SignalLifecycleContextBuilder<br/>Plan/Candidate-Snapshots · Mark/BBO ·<br/>geschlossene 5m-Kerzen · DQ · Structure-Events"]
+    SENG["evaluate_signal (pur)<br/>9 Monitore → streng distinkte Prioritaet →<br/>max. EIN finaler Zustand pro Zyklus"]
+    SDB[("signal_lifecycles ·<br/>signal_lifecycle_events ·<br/>signal_updates · signal_lifecycle_rejections")]
+    SAPI["/health · /status · /dashboard<br/>('Internal Research Lifecycle -<br/>kein Handelssignal, keine reale Position')"]
+
+    PLAN --> SJOB --> SCTX --> SENG --> SDB
+    SJOB --> SAPI
+```
+
+Kernentscheidungen:
+
+- **Geschlossene State Machine** (15 Zustaende, explizite Uebergangskarte,
+  6 terminale Zustaende; `PAUSED` als dokumentiert ruhender Zustand mit
+  ausschliesslich Abschluss-Ausgaengen). Terminale Signale werden nie
+  reaktiviert - Fortsetzung nur als neues Signal mit neuer ID.
+- **Purer Kern** (`app/signals/` ohne `lifecycle_context.py`) importiert
+  weder Persistenz noch Strategie/Risk/Cost/Telegram/Netzwerk; der
+  Context-Builder ist der einzige Adapter.
+- **Konservative Referenzen**: Mark-Preis, BBO (adverse Seite) und
+  GESCHLOSSENE 5m-Kerzen; nie Last-Preis allein, nie stale Daten;
+  Kerzenbestaetigungen tragen `CANDLE_APPROXIMATED_INTRABAR_ORDER` und
+  werden nie als Fill deklariert.
+- **Determinismus**: streng distinkte Ereignisprioritaeten
+  (`DATA_INVALID` > `INVALIDATED` > … > `INFO`), genau ein finaler
+  Zustand pro Zyklus; die Entry-Kette
+  `ENTRY_CONFIRMED → ACTIVE_RESEARCH` ist die einzige dokumentierte
+  Zwei-Schritt-Transition.
+- **Robustheit**: `active_key`-Dedupe, Optimistic Locking ueber
+  `state_version`, idempotente Events (`sha256`-Schluessel inkl.
+  erwarteter Version), Leases mit Expiry-Reclaim, aggregierte Updates und
+  Rejections; unpersistierte Transitionen werden nie als Erfolg gemeldet.
+
+### Persistenz (Alembic `0006`)
+
+4 neue Tabellen: `signal_lifecycles`, `signal_lifecycle_events`,
+`signal_updates`, `signal_lifecycle_rejections` (Events/Updates mit
+Idempotenz-Unique-Constraints, Rejections aggregiert je
+Kontext/Code/Zeitfenster/Modellversion).

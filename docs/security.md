@@ -119,6 +119,33 @@
 - Fee Schedules stammen ausschliesslich aus administrierter
   Konfiguration/Seed/Migration - nie aus unsicheren Laufzeitquellen.
 
+## Signal-Lifecycle-Layer (Phase 10)
+
+- Verwaltet ausschliesslich **interne Research-Lifecycles**: keine Orders,
+  keine Fills, keine Positionen, keine Wallets, keine Signatur-/
+  Transaktionspfade, keine privaten Account-/Balance-/Positions-/
+  Orderdaten. Ein AST-Isolationstest verbietet dem `app/signals/`-Kern
+  Persistenz-, Adapter-, Strategie-/Risk-/Cost-, Telegram- und
+  Netzwerk-Imports sowie Order-/Wallet-/Fill-Terminologie; nur
+  `lifecycle_context.py` und der Job duerfen als Adapter auf
+  Repositories/Datendienste zugreifen.
+- **Kein Telegram-Output in Phase 10** - hart erzwungen:
+  `SIGNAL_LIFECYCLE_TELEGRAM_OUTPUT_ENABLED=true` bricht die
+  Konfigurationsvalidierung ab; der Monitor-Job importiert keinerlei
+  Telegram-Module. Keine Nachricht, kein Zustand und kein Log enthaelt
+  eine Handelsanweisung (kein Entry/Stop/TP/Hebel als Aufforderung).
+- Zustaende beschreiben nur technische Entwicklung ("Entry-Bedingung
+  beobachtet", "technisch invalidiert") - niemals "Order ausgefuehrt",
+  "Position geschlossen" oder "Stop gefuellt"; kerzenbasierte
+  Bestaetigungen tragen explizite Approximations-Flags.
+- `/status` gibt keinerlei Preisniveaus aus; Modell-Referenzwerte
+  erscheinen nur lokal im Dashboard und sind als interne Modellwerte
+  markiert. Keine Formulierung verspricht Rendite oder Trefferquote.
+- Konservativ-by-default: stale Daten bestaetigen nie Entry, Target oder
+  Invalidation; fehlender Kontext (Plan/Candidate/Snapshot) beendet das
+  Signal strukturiert (`DATA_INVALID`) statt weiterzuraten; terminale
+  Zustaende sind unveraenderlich.
+
 ## Betriebssicherheit
 
 - Gewichteter Rate Limiter unterhalb des dokumentierten Polymarket-Budgets.

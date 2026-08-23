@@ -138,6 +138,14 @@ class SetupCandidateRepository:
 
     # ----------------------------------------------------------------- read
 
+    async def get(self, candidate_id: uuid.UUID) -> SetupCandidateRecord | None:
+        async with self._session_factory() as session:
+            return (
+                await session.execute(
+                    sa.select(SetupCandidateRecord).where(SetupCandidateRecord.id == candidate_id)
+                )
+            ).scalar_one_or_none()
+
     async def active_by_dedupe_key(self, dedupe_key: str) -> SetupCandidateRecord | None:
         async with self._session_factory() as session:
             return (

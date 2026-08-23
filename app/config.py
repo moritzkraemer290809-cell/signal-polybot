@@ -870,6 +870,164 @@ class RiskSettings(_EnvSettings):
         return value
 
 
+class SignalLifecycleSettings(_EnvSettings):
+    """Internal signal lifecycle configuration (phase 10).
+
+    Lifecycle signals are internal research/monitoring objects - never live
+    trades, never recommendations, never Telegram output.  Conservative
+    defaults; invalid trigger/policy/priority values fail loudly at startup.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="SIGNAL_", env_file=str(ENV_FILE), extra="ignore")
+
+    lifecycle_enabled: bool = True
+    lifecycle_model_name: str = "internal_research_lifecycle_v1"
+    lifecycle_model_version: str = "1.0.0"
+    lifecycle_monitor_refresh_seconds: float = 10.0
+    lifecycle_max_concurrent_monitors: int = 4
+    lifecycle_max_active_per_instrument: int = 2
+    lifecycle_dedupe_seconds: float = 900.0
+    lifecycle_plan_max_age_seconds: float = 1800.0
+    lifecycle_candidate_max_age_seconds: float = 3600.0
+    lifecycle_snapshot_max_age_seconds: float = 900.0
+    lifecycle_entry_max_wait_seconds: float = 1800.0
+    lifecycle_active_max_duration_seconds: float = 6 * 3600.0
+    lifecycle_data_degraded_grace_seconds: float = 120.0
+    lifecycle_queue_size: int = 256
+    lifecycle_lease_seconds: float = 60.0
+    lifecycle_event_schema_version: str = "sev-1"
+    lifecycle_update_schema_version: str = "suv-1"
+    #: identical rejections (plan+code) aggregate within this window
+    lifecycle_rejection_persist_seconds: float = 300.0
+
+    # --- admission gates ----------------------------------------------------
+    lifecycle_require_eligible_plan: bool = True
+    lifecycle_require_confirmed_candidate: bool = True
+    lifecycle_require_active_watchlist: bool = True
+    lifecycle_require_allowed_session: bool = True
+    lifecycle_require_healthy_data: bool = True
+    lifecycle_allow_degraded_data: bool = False
+    lifecycle_require_fresh_orderbook: bool = True
+    lifecycle_min_market_quality_score: int = 70
+
+    # --- triggers and monitoring policies ----------------------------------
+    entry_trigger_default: Literal[
+        "ZONE_TOUCH",
+        "ZONE_TOUCH_AND_5M_CLOSE_CONFIRM",
+        "RECLAIM_LEVEL_CLOSE_CONFIRM",
+        "RETEST_CONFIRM",
+        "BREAKOUT_CLOSE_CONFIRM",
+    ] = "ZONE_TOUCH_AND_5M_CLOSE_CONFIRM"
+    invalidation_trigger_default: Literal[
+        "MARK_PRICE_TOUCH", "BBO_TOUCH", "FIVE_M_CLOSE_BEYOND_LEVEL", "CONSERVATIVE_COMBINED"
+    ] = "CONSERVATIVE_COMBINED"
+    target_trigger_default: Literal[
+        "MARK_PRICE_TOUCH", "BBO_TOUCH", "FIVE_M_CLOSE_AT_OR_BEYOND_TARGET"
+    ] = "FIVE_M_CLOSE_AT_OR_BEYOND_TARGET"
+    entry_zone_tolerance_bps: float = 5.0
+    entry_confirmation_timeframe: Literal["5m"] = "5m"
+    entry_close_confirmation_required: bool = True
+    invalidation_close_confirmation_required: bool = False
+    target_close_confirmation_required: bool = True
+    monitor_use_mark_price: bool = True
+    monitor_use_bbo: bool = True
+    monitor_structure_exit_enabled: bool = True
+    monitor_targets_enabled: bool = True
+    monitor_session_end_policy: Literal["EXPIRE", "PAUSE", "TECHNICAL_EXIT"] = "EXPIRE"
+    monitor_post_entry_expiry_policy: Literal["EXPIRE", "TECHNICAL_EXIT"] = "EXPIRE"
+    monitor_supersede_policy: Literal["STRICT"] = "STRICT"
+    #: deterministic per-cycle event priority (higher wins); exact key set
+    monitor_event_priority_json: dict[str, int] = Field(
+        default_factory=lambda: {
+            "DATA_INVALID": 100,
+            "INVALIDATED": 90,
+            "SUPERSEDED": 80,
+            "EXPIRED": 70,
+            "PAUSED": 65,
+            "TECHNICAL_EXIT": 60,
+            "TARGET_2_REACHED": 50,
+            "TARGET_1_REACHED": 40,
+            "ENTRY_CONFIRMED": 30,
+            "INFO": 10,
+        }
+    )
+
+    # --- integration ---------------------------------------------------------
+    lifecycle_persist_updates: bool = True
+    #: local system events/metrics only - never Telegram trade posts
+    lifecycle_notify_enabled: bool = False
+    #: HARD RULE: phase 10 sends no Telegram signals; True is rejected
+    lifecycle_telegram_output_enabled: bool = False
+
+    @field_validator("lifecycle_telegram_output_enabled")
+    @classmethod
+    def _telegram_output_forbidden(cls, value: bool) -> bool:
+        if value:
+            raise ValueError(
+                "SIGNAL_LIFECYCLE_TELEGRAM_OUTPUT_ENABLED must stay false - phase 10 "
+                "sends no Telegram trade signals (a later phase requires explicit "
+                "approval)"
+            )
+        return value
+
+    @field_validator("monitor_event_priority_json")
+    @classmethod
+    def _validate_priorities(cls, value: dict[str, int]) -> dict[str, int]:
+        expected = {
+            "DATA_INVALID",
+            "INVALIDATED",
+            "SUPERSEDED",
+            "EXPIRED",
+            "PAUSED",
+            "TECHNICAL_EXIT",
+            "TARGET_2_REACHED",
+            "TARGET_1_REACHED",
+            "ENTRY_CONFIRMED",
+            "INFO",
+        }
+        if set(value) != expected:
+            raise ValueError(f"event priorities must define exactly {sorted(expected)}")
+        if len(set(value.values())) != len(value):
+            raise ValueError("event priorities must be strictly distinct (deterministic)")
+        ordered = sorted(value, key=lambda key: value[key], reverse=True)
+        if ordered[0] != "DATA_INVALID" or value["INVALIDATED"] <= value["TARGET_2_REACHED"]:
+            raise ValueError(
+                "conservative ordering violated: DATA_INVALID must rank highest and "
+                "INVALIDATED must outrank targets"
+            )
+        return value
+
+    @field_validator("lifecycle_min_market_quality_score")
+    @classmethod
+    def _validate_quality(cls, value: int) -> int:
+        if not 0 <= value <= 100:
+            raise ValueError("lifecycle_min_market_quality_score must be within 0..100")
+        return value
+
+    @field_validator(
+        "lifecycle_monitor_refresh_seconds",
+        "lifecycle_dedupe_seconds",
+        "lifecycle_plan_max_age_seconds",
+        "lifecycle_candidate_max_age_seconds",
+        "lifecycle_snapshot_max_age_seconds",
+        "lifecycle_entry_max_wait_seconds",
+        "lifecycle_active_max_duration_seconds",
+        "lifecycle_lease_seconds",
+    )
+    @classmethod
+    def _validate_positive(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("value must be positive")
+        return value
+
+    @field_validator("lifecycle_data_degraded_grace_seconds", "entry_zone_tolerance_bps")
+    @classmethod
+    def _validate_non_negative(cls, value: float) -> float:
+        if value < 0:
+            raise ValueError("value must be non-negative")
+        return value
+
+
 class Settings(BaseModel):
     """Aggregated, fully typed application configuration."""
 
@@ -890,6 +1048,7 @@ class Settings(BaseModel):
     strategy: StrategySettings = Field(default_factory=StrategySettings)
     risk: RiskSettings = Field(default_factory=RiskSettings)
     costs: CostSettings = Field(default_factory=CostSettings)
+    signals: SignalLifecycleSettings = Field(default_factory=SignalLifecycleSettings)
 
 
 @lru_cache(maxsize=1)

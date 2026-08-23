@@ -30,6 +30,7 @@ from app.domain.enums import (
 )
 from app.domain.models import CandleData, FundingRateData, TickerData
 from app.jobs.risk_plan_evaluation_refresh import RiskPlanEvaluationJob
+from app.jobs.signal_lifecycle_monitor import SignalLifecycleMonitorJob
 from app.jobs.strategy_evaluation_refresh import StrategyEvaluationJob
 from app.jobs.universe_refresh import UniverseRefreshJob
 from app.observability.logging import configure_logging, get_logger
@@ -54,7 +55,11 @@ from app.repositories.risk_plan_rejection_repository import RiskPlanRejectionRep
 from app.repositories.risk_plan_repository import RiskPlanRepository
 from app.repositories.session_event_repository import SessionEventRepository
 from app.repositories.setup_candidate_repository import SetupCandidateRepository
+from app.repositories.signal_event_repository import SignalEventRepository
+from app.repositories.signal_lifecycle_repository import SignalLifecycleRepository
+from app.repositories.signal_rejection_repository import SignalRejectionRepository
 from app.repositories.signal_repository import SignalRepository
+from app.repositories.signal_update_repository import SignalUpdateRepository
 from app.repositories.strategy_decision_repository import StrategyDecisionRepository
 from app.repositories.system_event_repository import SystemEventRepository
 from app.repositories.telegram_delivery_repository import TelegramDeliveryRepository
@@ -69,6 +74,7 @@ from app.sessions.early_close_provider import StaticUsEquityEarlyCloseProvider
 from app.sessions.equity_calendar import EquityCalendar
 from app.sessions.holiday_provider import StaticUsEquityHolidayProvider
 from app.sessions.session_manager import CryptoSessionManager, EquitySessionManager
+from app.signals.lifecycle_context import SignalLifecycleContextBuilder
 from app.strategy.evaluation_context import EvaluationContextBuilder
 from app.strategy.feature_store import FeatureStore
 from app.telegram.authorization import TelegramAuthorizer
@@ -112,6 +118,7 @@ class AppContext:
     selection: MarketSelectionCoordinator | None = None
     strategy: StrategyEvaluationJob | None = None
     risk: RiskPlanEvaluationJob | None = None
+    signals: SignalLifecycleMonitorJob | None = None
     start_correlation_id: str = ""
     started_at: datetime = field(default_factory=lambda: datetime.now(tz=UTC))
     extra: dict[str, Any] = field(default_factory=dict)
@@ -120,6 +127,8 @@ class AppContext:
         log = get_logger("bootstrap")
         if self.universe_job is not None:
             await self.universe_job.stop()
+        if self.signals is not None:
+            await self.signals.stop()
         if self.risk is not None:
             await self.risk.stop()
         if self.strategy is not None:
@@ -465,6 +474,8 @@ async def build_context(settings: Settings) -> AppContext:
                 ctx_after.strategy.trigger()
             if ctx_after is not None and ctx_after.risk is not None:
                 ctx_after.risk.trigger()
+            if ctx_after is not None and ctx_after.signals is not None:
+                ctx_after.signals.trigger()
 
         on_refresh = _sync_after_refresh
         await ws_client.start()
@@ -567,6 +578,32 @@ async def build_context(settings: Settings) -> AppContext:
         )
         await risk_job.start()
 
+    signals_job: SignalLifecycleMonitorJob | None = None
+    if settings.signals.lifecycle_enabled:
+        signals_builder = SignalLifecycleContextBuilder(
+            settings.signals,
+            RiskPlanRepository(db.session_factory),
+            SetupCandidateRepository(db.session_factory),
+            CandleRepository(db.session_factory),
+            FeatureRepository(db.session_factory),
+            InstrumentRiskRepository(db.session_factory),
+            market_data,
+            data_quality,
+            books,
+        )
+        signals_job = SignalLifecycleMonitorJob(
+            settings.signals,
+            signals_builder,
+            SignalLifecycleRepository(db.session_factory),
+            SignalEventRepository(db.session_factory),
+            SignalUpdateRepository(db.session_factory),
+            SignalRejectionRepository(db.session_factory),
+            RiskPlanRepository(db.session_factory),
+            selection,
+            bot_state,
+        )
+        await signals_job.start()
+
     universe_job: UniverseRefreshJob | None = None
     if settings.universe.refresh_enabled:
         universe_job = UniverseRefreshJob(instrument_service, settings.universe, on_refresh)
@@ -603,6 +640,7 @@ async def build_context(settings: Settings) -> AppContext:
         selection=selection,
         strategy=strategy_job,
         risk=risk_job,
+        signals=signals_job,
         start_correlation_id=start_correlation_id,
     )
     ctx_holder["ctx"] = ctx

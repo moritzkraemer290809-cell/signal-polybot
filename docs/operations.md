@@ -169,6 +169,43 @@ Korrelations-IDs werden pro Signal-Lifecycle gebunden (ab Phase 10 durchgaengig)
 - DB-Ausfall: `risk` meldet DEGRADED, unpersistierte Plaene werden nie
   als Erfolg gemeldet; Prozess, Feed und API laufen weiter.
 
+## Internal Signal Lifecycle (Phase 10)
+
+- Zustand: `/health` -> `signals` (Subsystem-State, Job-Liveness,
+  Signal-Zaehler nach Zustand, Rejections der letzten Stunde);
+  `/status` -> Zustaende, Zeitstempel, Modell-/Schema-Versionen, letzter
+  Zyklus - **ohne jegliche Preisniveaus**; `/dashboard` -> volle Details
+  inkl. Event-Historie, Updates, Modell-Referenzwerten ("Interne
+  Modell-Referenzwerte - keine Handelsanweisung") und State-Machine-Karte,
+  immer unter "Internal Research Lifecycle - kein Handelssignal, keine
+  reale Position."
+- `SIGNAL_LIFECYCLE_ENABLED=false` deaktiviert das Subsystem vollstaendig.
+  `SIGNAL_LIFECYCLE_TELEGRAM_OUTPUT_ENABLED=true` wird vom
+  Konfig-Validator mit Startabbruch abgelehnt - Phase 10 sendet nichts an
+  Telegram.
+- Keine Signale? `/dashboard` -> `signals.recent_rejections` zeigt die
+  strukturierten Admission-Codes (z. B. `SESSION_NOT_ALLOWED`,
+  `ORDERBOOK_NOT_FRESH`, `SIGNAL_DUPLICATE`). Eine Ablehnung ist ein
+  korrektes, konservatives Ergebnis - kein Fehler.
+- Terminale Zustaende (`TECHNICAL_EXIT`, `INVALIDATED`, `EXPIRED`,
+  `SUPERSEDED`, `REJECTED`, `DATA_INVALID`) sind endgueltig; fortgesetzte
+  Forschung erscheint als NEUES Signal mit neuer ID (Admission-Pfad).
+- Globaler PAUSED-Modus: keine neuen Admissions, keine
+  Entry-Bestaetigungen; Abschluss-Monitoring (Expiry/Supersede/DQ) laeuft
+  weiter.
+- DB-Ausfall: `signals` meldet DEGRADED; unpersistierte Transitionen
+  werden nie als Erfolg gemeldet, abgelaufene Leases werden nach Neustart
+  automatisch reklamiert. Redis wird von Phase 10 nicht benoetigt.
+- Metriken (Praefix `signal.`): `signal.admissions`,
+  `signal.admission_rejections.*`, `signal.transitions(.state)`,
+  `signal.terminal.*`, `signal.state_version_conflicts`,
+  `signal.invalid_transitions_suppressed`, `signal.updates(+_aggregated)`,
+  `signal.monitor_cycles`, `signal.monitor_cycle_duration_seconds`,
+  `signal.monitor_failures`, `signal.transition_persist_failures`,
+  `signal.lease_contention`, `signal.active_count`,
+  `signal.expired_leases`, `signal.overlap_skipped`. Details:
+  [`docs/signal-lifecycle.md`](signal-lifecycle.md).
+
 ## Backup & Recovery
 
 Persistente Daten liegen in den Volumes `polysignal_pgdata` und

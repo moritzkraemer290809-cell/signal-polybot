@@ -271,6 +271,92 @@ def test_selection_layer_contains_no_trading_terminology() -> None:
                 assert term not in source, f"{path} contains trading term {term!r}"
 
 
+def test_signal_lifecycle_core_isolation() -> None:
+    """Phase-10 signals modules: pure lifecycle logic over immutable
+    snapshots.  Only lifecycle_context.py (the adapter) may touch
+    repositories and data services; the core imports no persistence, no
+    market adapters, no strategy/risk/cost engines, no Telegram, no network
+    clients.  Nothing in the package claims fills, orders or real PnL."""
+    core_forbidden = (
+        "app.telegram",
+        "app.adapters",
+        "app.risk",
+        "app.costs",
+        "app.strategy",
+        "app.selection",
+        "app.monitoring",
+        "app.data",
+        "app.repositories",
+        "app.jobs",
+        "httpx",
+        "websockets",
+        "aiogram",
+    )
+    adapter_forbidden = (
+        "app.telegram",
+        "app.adapters",
+        "app.risk",
+        "app.costs",
+        "app.strategy",
+        "app.monitoring",
+        "httpx",
+        "websockets",
+        "aiogram",
+    )
+    forbidden_terms = (
+        "wallet",
+        "private_key",
+        "place_order",
+        "create_order",
+        "submit_order",
+        "order_client",
+        "signing",
+        "fill_price",
+        "filled_at",
+        "realised_pnl",
+        "realized_pnl",
+    )
+    signal_files = sorted((APP_DIR / "signals").rglob("*.py"))
+    assert len(signal_files) > 20
+    job_file = APP_DIR / "jobs" / "signal_lifecycle_monitor.py"
+    for path in [*signal_files, job_file]:
+        adapter = path.name in ("lifecycle_context.py", "signal_lifecycle_monitor.py")
+        forbidden = adapter_forbidden if adapter else core_forbidden
+        source = path.read_text()
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            modules: list[str] = []
+            if isinstance(node, ast.Import):
+                modules = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                modules = [node.module]
+            for module in modules:
+                for prefix in forbidden:
+                    assert not module.startswith(prefix), (
+                        f"{path} imports {module!r} - signal lifecycle isolation violated"
+                    )
+        lowered = source.lower()
+        for term in forbidden_terms:
+            assert term not in lowered, f"{path} contains forbidden term {term!r}"
+
+
+def test_signal_lifecycle_claims_no_execution_or_guarantees() -> None:
+    """No lifecycle source declares executions, positions or guarantees."""
+    forbidden_phrases = (
+        "guaranteed profit",
+        "garantierter gewinn",
+        "profit guarantee",
+        "order executed",
+        "position opened",
+        "position closed",
+        "trade executed",
+    )
+    for path in sorted((APP_DIR / "signals").rglob("*.py")):
+        lowered = path.read_text().lower()
+        for phrase in forbidden_phrases:
+            assert phrase not in lowered, f"{path} contains {phrase!r}"
+
+
 def test_strategy_layer_isolation_and_no_trade_parameters() -> None:
     """Phase-8 strategy modules: no Telegram/risk/cost/trading imports, no
     network clients, and no trade-parameter terminology (entry/stop/target/

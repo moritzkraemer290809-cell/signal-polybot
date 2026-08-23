@@ -126,6 +126,15 @@ async def status(request: Request) -> dict[str, Any]:
     else:
         risk_status = "disabled"
 
+    signals = getattr(ctx, "signals", None)
+    signals_status: dict[str, Any] | str
+    if signals is not None:
+        signals_status = await signals.status_stats()
+    elif settings.signals.lifecycle_enabled:
+        signals_status = "enabled_not_initialized"
+    else:
+        signals_status = "disabled"
+
     telegram_subsystem = getattr(ctx, "telegram", None)
     telegram: dict[str, Any] | str
     if telegram_subsystem is not None:
@@ -156,4 +165,5 @@ async def status(request: Request) -> dict[str, Any]:
         "watchlist": watchlist,
         "strategy": strategy_status,
         "risk": risk_status,
+        "signals": signals_status,
     }
