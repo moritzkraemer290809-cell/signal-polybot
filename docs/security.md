@@ -146,6 +146,36 @@
   Signal strukturiert (`DATA_INVALID`) statt weiterzuraten; terminale
   Zustaende sind unveraenderlich.
 
+## Simulations-/Backtest-Layer (Phase 11)
+
+- Erzeugt ausschliesslich **hypothetische Modellergebnisse**: keine
+  Orders, keine Ausfuehrung, keine reale Position, keine Wallets, keine
+  Signierung, keine privaten Account-/Balance-/Positions-/Orderdaten und
+  kein Echtgeld. Das Referenzkonto ist rein virtuell.
+- AST-Isolationstests verbieten dem Simulationskern Telegram-, Adapter-
+  und Netzwerk-Imports sowie Order-/Wallet-/Signing-/Account-Identifier;
+  nur `simulation_context.py` und `data_replay.py` duerfen als Adapter
+  auf Repositories bzw. lokale Dateien zugreifen. Ein Test stellt
+  ausserdem sicher, dass ein Replay ohne jeden Socket-Zugriff laeuft.
+- **Keine Telegram-Ausgabe in Phase 11** - weder Jobs noch Kern
+  importieren Telegram-Module (testseitig erzwungen).
+- Pflicht-Disclaimer in jeder API-, Dashboard-, Report- und
+  Exportausgabe; Erfolgs-/Garantiewoerter ("profitabel", "garantiert",
+  "echte Performance", "realisiert", "Fill", "ausgefuehrt") sind
+  testseitig ausgeschlossen. Ergebnisse werden nie als reale Performance
+  dargestellt.
+- Lokale Eingabedateien nur repository-relativ ohne `..`; der
+  Konfigurationsvalidator lehnt absolute Pfade, Home-Pfade und
+  Traversal ab. Exporte sind standardmaessig deaktiviert, erfolgen nur
+  lokal und nie automatisch.
+- Konservativ-by-default: fehlende, veraltete oder zu duenne oeffentliche
+  Daten fuehren zu strukturierten Ablehnungen statt idealisierter
+  Modellpreise; nicht modellierbare Exits zaehlen nie als vollstaendige
+  Simulation; fehlendes Funding wird nie still als 0 angenommen.
+- Reproduzierbarkeit als Sicherheitsmerkmal: immutable Manifeste,
+  deterministische Seeds und Config-Hashes; abgeschlossene Laeufe werden
+  nie veraendert - jede Aenderung erzeugt einen neuen Lauf.
+
 ## Betriebssicherheit
 
 - Gewichteter Rate Limiter unterhalb des dokumentierten Polymarket-Budgets.

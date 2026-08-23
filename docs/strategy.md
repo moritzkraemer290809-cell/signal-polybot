@@ -228,3 +228,13 @@ Research-Disclaimer. Metriken u. a.: `strategy.evaluations_total`,
 `strategy.setup_candidates_detected/confirmed/expired/superseded`,
 `strategy.rejections.*`, `strategy.regime.*`,
 `strategy.feature_data_gap_count`, `strategy.persistence_failures`.
+
+## Nutzung in Simulation und Backtest (Phase 11)
+
+Das historische Replay der Phase 11 ruft denselben puren
+Strategie-Kern auf: gleiche Regeln, gleiche Gates, gleiche Versionierung.
+Es werden ausschliesslich geschlossene Kerzen sichtbar gemacht (Replay-Uhr
+plus Look-ahead-Guard), sodass eine Auswertung nie Daten sieht, die zum
+Bewertungszeitpunkt nicht vorlagen. Die Strategie selbst wird von der
+Simulation nie veraendert. Details:
+[`docs/simulation-and-backtesting.md`](simulation-and-backtesting.md).

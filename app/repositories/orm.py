@@ -1087,3 +1087,368 @@ class SignalLifecycleRejectionRecord(Base):
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
     )
+
+
+# --------------------------------------------------------------------------
+# Phase 11 - hypothetical simulation, backtesting and analytics
+#
+# Every row here describes MODELLED, hypothetical output over public data:
+# no order, no execution, no position, no account and no real performance.
+# --------------------------------------------------------------------------
+
+
+class ExperimentRecord(Base, TimestampMixin):
+    """A named research question grouping hypothetical runs."""
+
+    __tablename__ = "experiments"
+
+    id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True)
+    name: Mapped[str] = mapped_column(sa.String(120), nullable=False, index=True)
+    description: Mapped[str | None] = mapped_column(sa.Text)
+    status: Mapped[str] = mapped_column(sa.String(24), nullable=False, index=True)
+    created_by: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    tags: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
+    detail: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
+
+
+class ExperimentManifestRecord(Base):
+    """Immutable manifest of ONE run - never updated in place."""
+
+    __tablename__ = "experiment_manifests"
+    __table_args__ = (
+        sa.UniqueConstraint("content_hash", name="uq_experiment_manifests_content_hash"),
+        sa.Index("ix_experiment_manifests_experiment", "experiment_id", "run_type"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True)
+    experiment_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("experiments.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    run_type: Mapped[str] = mapped_column(sa.String(16), nullable=False, index=True)
+    schema_version: Mapped[str] = mapped_column(sa.String(16), nullable=False)
+    content_hash: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONVariant, nullable=False)
+    simulation_model_version: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    simulation_configuration_hash: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    strategy_version: Mapped[str] = mapped_column(sa.String(32), nullable=False, index=True)
+    risk_model_version: Mapped[str] = mapped_column(sa.String(32), nullable=False, index=True)
+    cost_model_version: Mapped[str] = mapped_column(sa.String(32), nullable=False, index=True)
+    lifecycle_model_version: Mapped[str] = mapped_column(sa.String(32), nullable=False, index=True)
+    fee_schedule_version: Mapped[str] = mapped_column(sa.String(48), nullable=False)
+    execution_assumption_version: Mapped[str] = mapped_column(sa.String(48), nullable=False)
+    replay_ordering_version: Mapped[str] = mapped_column(sa.String(16), nullable=False)
+    replay_clock_version: Mapped[str] = mapped_column(sa.String(16), nullable=False)
+    metrics_version: Mapped[str] = mapped_column(sa.String(16), nullable=False)
+    disclaimer_version: Mapped[str] = mapped_column(sa.String(16), nullable=False)
+    delay_model: Mapped[str] = mapped_column(sa.String(32), nullable=False, index=True)
+    random_seed: Mapped[int | None] = mapped_column(sa.BigInteger)
+    start_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+    end_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+    )
+
+
+class SimulationRunRecord(Base, TimestampMixin):
+    """One shadow or backtest run (state; history in simulation_events)."""
+
+    __tablename__ = "simulation_runs"
+    __table_args__ = (
+        sa.UniqueConstraint("dedupe_key", name="uq_simulation_runs_dedupe_key"),
+        sa.Index("ix_simulation_runs_type_status", "run_type", "run_status"),
+        sa.Index("ix_simulation_runs_window", "start_at", "end_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True)
+    experiment_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("experiments.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    manifest_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("experiment_manifests.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    run_type: Mapped[str] = mapped_column(sa.String(16), nullable=False, index=True)
+    run_status: Mapped[str] = mapped_column(sa.String(24), nullable=False, index=True)
+    dedupe_key: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    start_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+    end_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    events_replayed: Mapped[int] = mapped_column(sa.BigInteger, default=0, nullable=False)
+    simulations_total: Mapped[int] = mapped_column(sa.Integer, default=0, nullable=False)
+    simulations_completed: Mapped[int] = mapped_column(sa.Integer, default=0, nullable=False)
+    simulations_incomplete: Mapped[int] = mapped_column(sa.Integer, default=0, nullable=False)
+    simulations_rejected: Mapped[int] = mapped_column(sa.Integer, default=0, nullable=False)
+    checkpoint: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
+    excluded_intervals: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
+    data_quality_summary: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
+    warnings: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
+    detail: Mapped[str | None] = mapped_column(sa.Text)
+    created_by: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+
+
+class BacktestRunRecord(Base, TimestampMixin):
+    """Backtest-specific run state (validation, progress, checkpoints)."""
+
+    __tablename__ = "backtest_runs"
+    __table_args__ = (
+        sa.UniqueConstraint("run_id", name="uq_backtest_runs_run_id"),
+        sa.Index("ix_backtest_runs_status", "run_status"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True)
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("simulation_runs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    run_status: Mapped[str] = mapped_column(sa.String(24), nullable=False)
+    replay_ordering_version: Mapped[str] = mapped_column(sa.String(16), nullable=False)
+    replay_clock_version: Mapped[str] = mapped_column(sa.String(16), nullable=False)
+    data_complete: Mapped[bool] = mapped_column(sa.Boolean, default=False, nullable=False)
+    missing_channels: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
+    gap_intervals: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
+    events_replayed: Mapped[int] = mapped_column(sa.BigInteger, default=0, nullable=False)
+    last_event_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    checkpoint: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
+    detail: Mapped[str | None] = mapped_column(sa.Text)
+
+
+class SimulatedPositionRecord(Base, TimestampMixin):
+    """ONE hypothetical simulated position - never a real position."""
+
+    __tablename__ = "simulated_positions"
+    __table_args__ = (
+        sa.UniqueConstraint("dedupe_key", name="uq_simulated_positions_dedupe_key"),
+        sa.Index("ix_simulated_positions_run_state", "run_id", "state"),
+        sa.Index("ix_simulated_positions_symbol", "symbol"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True)
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("simulation_runs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    lifecycle_signal_id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, nullable=False, index=True)
+    plan_id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, nullable=False, index=True)
+    candidate_id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, nullable=False, index=True)
+    symbol: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    asset_class: Mapped[str] = mapped_column(sa.String(16), nullable=False)
+    candidate_type: Mapped[str] = mapped_column(sa.String(40), nullable=False)
+    direction: Mapped[str] = mapped_column(sa.String(8), nullable=False)
+    state: Mapped[str] = mapped_column(sa.String(32), nullable=False, index=True)
+    exit_reason: Mapped[str | None] = mapped_column(sa.String(32), index=True)
+    delay_model: Mapped[str] = mapped_column(sa.String(32), nullable=False, index=True)
+    delay_seconds: Mapped[Decimal | None] = mapped_column(sa.Numeric(18, 6))
+    event_reference_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+    scheduled_entry_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    modelled_entry_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    modelled_exit_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    modelled_entry_price: Mapped[Decimal | None] = mapped_column(PriceNumeric)
+    modelled_exit_price: Mapped[Decimal | None] = mapped_column(PriceNumeric)
+    modelled_quantity: Mapped[Decimal | None] = mapped_column(PriceNumeric)
+    gross_result: Mapped[Decimal | None] = mapped_column(PriceNumeric)
+    net_result: Mapped[Decimal | None] = mapped_column(PriceNumeric)
+    gross_r: Mapped[Decimal | None] = mapped_column(sa.Numeric(18, 6))
+    net_r: Mapped[Decimal | None] = mapped_column(sa.Numeric(18, 6))
+    fees_total: Mapped[Decimal | None] = mapped_column(PriceNumeric)
+    slippage_total: Mapped[Decimal | None] = mapped_column(PriceNumeric)
+    funding_total: Mapped[Decimal | None] = mapped_column(PriceNumeric)
+    duration_seconds: Mapped[Decimal | None] = mapped_column(sa.Numeric(18, 3))
+    data_completeness: Mapped[str] = mapped_column(sa.String(16), nullable=False, index=True)
+    warnings: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
+    payload: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
+    dedupe_key: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    disclaimer_version: Mapped[str] = mapped_column(sa.String(16), nullable=False)
+
+
+class SimulatedExecutionRecord(Base):
+    """One modelled leg of a hypothetical simulation (never a fill)."""
+
+    __tablename__ = "simulated_executions"
+    __table_args__ = (
+        sa.Index("ix_simulated_executions_position_leg", "simulated_position_id", "leg"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True)
+    simulated_position_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("simulated_positions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    run_id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, nullable=False, index=True)
+    leg: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    side_consumed: Mapped[str] = mapped_column(sa.String(8), nullable=False)
+    modelled_price: Mapped[Decimal] = mapped_column(PriceNumeric, nullable=False)
+    reference_price: Mapped[Decimal] = mapped_column(PriceNumeric, nullable=False)
+    quantity: Mapped[Decimal] = mapped_column(PriceNumeric, nullable=False)
+    notional: Mapped[Decimal] = mapped_column(PriceNumeric, nullable=False)
+    slippage_cost: Mapped[Decimal] = mapped_column(PriceNumeric, nullable=False)
+    slippage_bps: Mapped[Decimal] = mapped_column(sa.Numeric(18, 6), nullable=False)
+    fee_cost: Mapped[Decimal] = mapped_column(PriceNumeric, nullable=False)
+    levels_consumed: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    book_snapshot_id: Mapped[uuid.UUID | None] = mapped_column(sa.Uuid)
+    book_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    as_of: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+    assumptions: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+    )
+
+
+class SimulationEventRecord(Base):
+    """Immutable audit trail of a run / simulation."""
+
+    __tablename__ = "simulation_events"
+    __table_args__ = (
+        sa.UniqueConstraint("idempotency_key", name="uq_simulation_events_idempotency_key"),
+        sa.Index("ix_simulation_events_run_type", "run_id", "event_type"),
+    )
+
+    id: Mapped[int] = mapped_column(
+        sa.BigInteger().with_variant(sa.Integer(), "sqlite"), primary_key=True, autoincrement=True
+    )
+    run_id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, nullable=False, index=True)
+    simulated_position_id: Mapped[uuid.UUID | None] = mapped_column(sa.Uuid, index=True)
+    event_type: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    detail: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
+    as_of: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+    )
+
+
+class SimulationRejectionRecord(Base):
+    """Aggregated structured reasons a simulation was not modelled."""
+
+    __tablename__ = "simulation_rejections"
+    __table_args__ = (
+        sa.UniqueConstraint(
+            "context_key",
+            "primary_code",
+            "window_bucket",
+            "simulation_model_version",
+            name="uq_simulation_rejections_identity",
+        ),
+        sa.Index("ix_simulation_rejections_code", "primary_code"),
+    )
+
+    id: Mapped[int] = mapped_column(
+        sa.BigInteger().with_variant(sa.Integer(), "sqlite"), primary_key=True, autoincrement=True
+    )
+    run_id: Mapped[uuid.UUID | None] = mapped_column(sa.Uuid, index=True)
+    lifecycle_signal_id: Mapped[uuid.UUID | None] = mapped_column(sa.Uuid, index=True)
+    plan_id: Mapped[uuid.UUID | None] = mapped_column(sa.Uuid)
+    candidate_id: Mapped[uuid.UUID | None] = mapped_column(sa.Uuid)
+    context_key: Mapped[str] = mapped_column(sa.String(48), nullable=False)
+    symbol: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    primary_code: Mapped[str] = mapped_column(sa.String(48), nullable=False)
+    codes: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
+    detail: Mapped[str | None] = mapped_column(sa.Text)
+    count: Mapped[int] = mapped_column(sa.Integer, default=1, nullable=False)
+    first_as_of: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+    last_as_of: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+    window_bucket: Mapped[str] = mapped_column(sa.String(24), nullable=False)
+    simulation_model_version: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    simulation_config_hash: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+    )
+
+
+class WalkForwardSplitRecord(Base):
+    """One immutable train/validation/test split of a walk-forward run."""
+
+    __tablename__ = "walk_forward_splits"
+    __table_args__ = (
+        sa.UniqueConstraint("run_id", "split_index", name="uq_walk_forward_splits_identity"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True)
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("simulation_runs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    split_index: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    mode: Mapped[str] = mapped_column(sa.String(16), nullable=False)
+    train_start_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+    train_end_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+    validation_start_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), nullable=False
+    )
+    validation_end_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+    test_start_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+    test_end_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
+    selected_configuration: Mapped[str | None] = mapped_column(sa.String(64))
+    sample_status: Mapped[str] = mapped_column(sa.String(24), nullable=False)
+    selection_rationale: Mapped[str | None] = mapped_column(sa.Text)
+    candidates: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
+    scores: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+    )
+
+
+class PerformanceMetricSetRecord(Base):
+    """One segment's hypothetical metric set (versioned definitions)."""
+
+    __tablename__ = "performance_metric_sets"
+    __table_args__ = (
+        sa.UniqueConstraint("set_key", name="uq_performance_metric_sets_key"),
+        sa.Index("ix_performance_metric_sets_run_segment", "run_id", "segment_kind"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True)
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("simulation_runs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    set_key: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    segment_kind: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    segment_key: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    sample_status: Mapped[str] = mapped_column(sa.String(24), nullable=False, index=True)
+    complete_simulations: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    metrics_version: Mapped[str] = mapped_column(sa.String(16), nullable=False)
+    disclaimer_version: Mapped[str] = mapped_column(sa.String(16), nullable=False)
+    warnings: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+    )
+
+
+class PerformanceMetricValueRecord(Base):
+    """One named hypothetical metric value of a metric set."""
+
+    __tablename__ = "performance_metric_values"
+    __table_args__ = (
+        sa.UniqueConstraint("metric_set_id", "name", name="uq_performance_metric_values_name"),
+    )
+
+    id: Mapped[int] = mapped_column(
+        sa.BigInteger().with_variant(sa.Integer(), "sqlite"), primary_key=True, autoincrement=True
+    )
+    metric_set_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("performance_metric_sets.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    value: Mapped[Decimal | None] = mapped_column(sa.Numeric(38, 12))
+    unit: Mapped[str] = mapped_column(sa.String(24), nullable=False)
+    detail: Mapped[str | None] = mapped_column(sa.Text)
+
+
+class SimulationDataQualitySummaryRecord(Base):
+    """Optional per-run data quality/coverage summary."""
+
+    __tablename__ = "simulation_data_quality_summaries"
+    __table_args__ = (
+        sa.UniqueConstraint("run_id", "symbol", name="uq_simulation_dq_summary_identity"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True)
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("simulation_runs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    symbol: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    checked_channels: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
+    missing_channels: Mapped[dict[str, Any] | None] = mapped_column(JSONVariant)
+    gap_count: Mapped[int] = mapped_column(sa.Integer, default=0, nullable=False)
+    excluded_seconds: Mapped[Decimal | None] = mapped_column(sa.Numeric(18, 3))
+    detail: Mapped[str | None] = mapped_column(sa.Text)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+    )

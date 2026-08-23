@@ -9,6 +9,7 @@ directories, no home directory, no foreign projects.
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -1028,6 +1029,221 @@ class SignalLifecycleSettings(_EnvSettings):
         return value
 
 
+class ShadowSimulationSettings(_EnvSettings):
+    """Shadow simulation configuration (phase 11).
+
+    Shadow mode observes internal phase-10 research lifecycles and models a
+    delayed, hypothetical follower.  Nothing here places an order, touches a
+    wallet or claims a real execution.  Disabled by default.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="SHADOW_", env_file=str(ENV_FILE), extra="ignore")
+
+    #: HARD DEFAULT: simulation stays off until a local admin enables it
+    mode_enabled: bool = False
+    simulation_model_name: str = "hypothetical_follower_simulation_v1"
+    simulation_model_version: str = "1.0.0"
+    simulation_monitor_refresh_seconds: float = 15.0
+    simulation_max_concurrent: int = 4
+    simulation_queue_size: int = 256
+    simulation_lease_seconds: float = 60.0
+    simulation_dedupe_seconds: float = 900.0
+    #: conservative: incomplete cost inputs mark the simulation INCOMPLETE
+    simulation_require_complete_cost_data: bool = True
+    simulation_require_funding_data: bool = True
+    #: V1 default: no assumed partial reduction at reference target 1
+    simulation_allow_partial_target_simulation: bool = False
+    simulation_partial_target_pct: float = 50.0
+
+    # --- follower delay model ------------------------------------------------
+    delay_model: Literal[
+        "FIXED_SECONDS",
+        "UNIFORM_RANGE_SECONDS",
+        "LOGNORMAL_DELAY",
+        "EVENT_TIMESTAMP_ONLY",
+    ] = "FIXED_SECONDS"
+    delay_fixed_seconds: float = 20.0
+    delay_min_seconds: float = 10.0
+    delay_max_seconds: float = 30.0
+    delay_lognormal_mu: float = 2.8
+    delay_lognormal_sigma: float = 0.4
+    #: no modelled entry when the delayed reference data is older than this
+    delay_max_entry_staleness_seconds: float = 30.0
+    exit_max_book_staleness_seconds: float = 60.0
+    #: what happens when an exit cannot be modelled from public book data
+    unmodeled_exit_policy: Literal["REJECT", "MARK_UNMODELED"] = "MARK_UNMODELED"
+
+    @field_validator(
+        "simulation_monitor_refresh_seconds",
+        "simulation_lease_seconds",
+        "simulation_dedupe_seconds",
+        "delay_max_entry_staleness_seconds",
+        "exit_max_book_staleness_seconds",
+        "delay_lognormal_sigma",
+    )
+    @classmethod
+    def _validate_positive(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("value must be positive")
+        return value
+
+    @field_validator("delay_fixed_seconds", "delay_min_seconds", "delay_max_seconds")
+    @classmethod
+    def _validate_non_negative_delay(cls, value: float) -> float:
+        if value < 0:
+            raise ValueError("delay seconds must be non-negative")
+        return value
+
+    @field_validator("simulation_partial_target_pct")
+    @classmethod
+    def _validate_partial_pct(cls, value: float) -> float:
+        if not 0 < value < 100:
+            raise ValueError("simulation_partial_target_pct must be within (0, 100)")
+        return value
+
+    @field_validator("simulation_max_concurrent", "simulation_queue_size")
+    @classmethod
+    def _validate_positive_int(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("value must be positive")
+        return value
+
+    @field_validator("delay_max_seconds")
+    @classmethod
+    def _validate_delay_range(cls, value: float, info: Any) -> float:
+        minimum = info.data.get("delay_min_seconds")
+        if minimum is not None and value < minimum:
+            raise ValueError("SHADOW_DELAY_MAX_SECONDS must be >= SHADOW_DELAY_MIN_SECONDS")
+        return value
+
+
+class BacktestSettings(_EnvSettings):
+    """Historical backtest configuration (phase 11).
+
+    Backtests replay persisted public data causally.  Results are always
+    hypothetical model output, never real performance.  Disabled by default;
+    input files are restricted to a repository-relative directory.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="BACKTEST_", env_file=str(ENV_FILE), extra="ignore"
+    )
+
+    #: HARD DEFAULT: backtesting stays off until explicitly enabled locally
+    enabled: bool = False
+    model_name: str = "causal_replay_backtest_v1"
+    model_version: str = "1.0.0"
+    max_concurrent_runs: int = 1
+    checkpoint_interval_events: int = 500
+    require_bbo: bool = True
+    require_orderbook: bool = True
+    require_funding: bool = True
+    #: excluding gap segments is opt-in; otherwise a gap rejects the run
+    allow_segmented_data: bool = False
+    max_data_gap_seconds: float = 900.0
+    replay_ordering_version: str = "rov-1"
+    default_start_at: str = ""
+    default_end_at: str = ""
+    #: repository-relative ONLY - validated against traversal
+    allowed_input_directory: str = "data/backtest_input"
+    max_events_per_run: int = 5_000_000
+    run_timeout_seconds: float = 3600.0
+    min_complete_simulations: int = 20
+    virtual_account_pusd: float = 10_000.0
+    enable_bootstrap: bool = False
+    bootstrap_resamples: int = 1000
+    bootstrap_seed: int = 20260823
+    walk_forward_enabled: bool = False
+    walk_forward_train_days: int = 30
+    walk_forward_validation_days: int = 10
+    walk_forward_test_days: int = 10
+    walk_forward_step_days: int = 10
+    walk_forward_mode: Literal["ROLLING", "EXPANDING"] = "ROLLING"
+    walk_forward_min_simulations: int = 20
+
+    @field_validator("allowed_input_directory")
+    @classmethod
+    def _validate_input_directory(cls, value: str) -> str:
+        """Local, repository-relative input only - never a foreign path."""
+        candidate = value.strip()
+        if not candidate:
+            raise ValueError("BACKTEST_ALLOWED_INPUT_DIRECTORY must not be empty")
+        if ".." in Path(candidate).parts:
+            raise ValueError("BACKTEST_ALLOWED_INPUT_DIRECTORY must not contain '..'")
+        if Path(candidate).is_absolute() or candidate.startswith("~"):
+            raise ValueError("BACKTEST_ALLOWED_INPUT_DIRECTORY must be repository-relative")
+        resolved = (REPO_ROOT / candidate).resolve()
+        if not resolved.is_relative_to(REPO_ROOT):
+            raise ValueError("BACKTEST_ALLOWED_INPUT_DIRECTORY must stay inside the repository")
+        return candidate
+
+    @field_validator(
+        "max_data_gap_seconds",
+        "run_timeout_seconds",
+        "virtual_account_pusd",
+    )
+    @classmethod
+    def _validate_positive(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("value must be positive")
+        return value
+
+    @field_validator(
+        "max_concurrent_runs",
+        "checkpoint_interval_events",
+        "max_events_per_run",
+        "bootstrap_resamples",
+        "walk_forward_train_days",
+        "walk_forward_validation_days",
+        "walk_forward_test_days",
+        "walk_forward_step_days",
+    )
+    @classmethod
+    def _validate_positive_int(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("value must be positive")
+        return value
+
+    @field_validator("min_complete_simulations", "walk_forward_min_simulations")
+    @classmethod
+    def _validate_min_sample(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("minimum sample size must be at least 1")
+        return value
+
+    @field_validator("default_start_at", "default_end_at")
+    @classmethod
+    def _validate_timestamps(cls, value: str) -> str:
+        candidate = value.strip()
+        if not candidate:
+            return ""
+        try:
+            datetime.fromisoformat(candidate)
+        except ValueError as error:
+            raise ValueError("must be an ISO-8601 UTC timestamp or empty") from error
+        return candidate
+
+
+class SimulationReportingSettings(_EnvSettings):
+    """Reporting/versioning for hypothetical simulation output (phase 11)."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="SIMULATION_", env_file=str(ENV_FILE), extra="ignore"
+    )
+
+    disclaimer_version: str = "sdv-1"
+    metrics_version: str = "smv-1"
+    #: HARD DEFAULT: no export; local admin action only, never automatic
+    export_enabled: bool = False
+
+    @field_validator("disclaimer_version", "metrics_version")
+    @classmethod
+    def _validate_version(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("version identifiers must not be empty")
+        return value
+
+
 class Settings(BaseModel):
     """Aggregated, fully typed application configuration."""
 
@@ -1049,6 +1265,11 @@ class Settings(BaseModel):
     risk: RiskSettings = Field(default_factory=RiskSettings)
     costs: CostSettings = Field(default_factory=CostSettings)
     signals: SignalLifecycleSettings = Field(default_factory=SignalLifecycleSettings)
+    shadow: ShadowSimulationSettings = Field(default_factory=ShadowSimulationSettings)
+    backtest: BacktestSettings = Field(default_factory=BacktestSettings)
+    simulation_reporting: SimulationReportingSettings = Field(
+        default_factory=SimulationReportingSettings
+    )
 
 
 @lru_cache(maxsize=1)

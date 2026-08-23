@@ -29,16 +29,20 @@ from app.domain.enums import (
     WsConnectionState,
 )
 from app.domain.models import CandleData, FundingRateData, TickerData
+from app.jobs.backtest_runner import BacktestRunner
 from app.jobs.risk_plan_evaluation_refresh import RiskPlanEvaluationJob
+from app.jobs.shadow_simulation_monitor import ShadowSimulationMonitorJob
 from app.jobs.signal_lifecycle_monitor import SignalLifecycleMonitorJob
 from app.jobs.strategy_evaluation_refresh import StrategyEvaluationJob
 from app.jobs.universe_refresh import UniverseRefreshJob
 from app.observability.logging import configure_logging, get_logger
 from app.repositories.app_state_repository import AppStateRepository
+from app.repositories.backtest_run_repository import BacktestRunRepository
 from app.repositories.candle_repository import CandleRepository
 from app.repositories.cost_estimate_repository import CostEstimateRepository
 from app.repositories.database import Database
 from app.repositories.decision_repository import DecisionRepository
+from app.repositories.experiment_repository import ExperimentRepository
 from app.repositories.feature_repository import FeatureRepository
 from app.repositories.fee_schedule_repository import (
     ExecutionAssumptionRepository,
@@ -50,6 +54,7 @@ from app.repositories.instrument_risk_repository import InstrumentRiskRepository
 from app.repositories.market_selection_repository import MarketSelectionRepository
 from app.repositories.market_tick_repository import MarketTickRepository
 from app.repositories.orderbook_repository import OrderbookSnapshotRepository
+from app.repositories.performance_metric_repository import PerformanceMetricRepository
 from app.repositories.regime_repository import RegimeRepository
 from app.repositories.risk_plan_rejection_repository import RiskPlanRejectionRepository
 from app.repositories.risk_plan_repository import RiskPlanRepository
@@ -60,6 +65,13 @@ from app.repositories.signal_lifecycle_repository import SignalLifecycleReposito
 from app.repositories.signal_rejection_repository import SignalRejectionRepository
 from app.repositories.signal_repository import SignalRepository
 from app.repositories.signal_update_repository import SignalUpdateRepository
+from app.repositories.simulated_execution_repository import SimulatedExecutionRepository
+from app.repositories.simulated_position_repository import SimulatedPositionRepository
+from app.repositories.simulation_event_repository import (
+    SimulationEventRepository,
+    SimulationRejectionRepository,
+)
+from app.repositories.simulation_run_repository import SimulationRunRepository
 from app.repositories.strategy_decision_repository import StrategyDecisionRepository
 from app.repositories.system_event_repository import SystemEventRepository
 from app.repositories.telegram_delivery_repository import TelegramDeliveryRepository
@@ -75,6 +87,7 @@ from app.sessions.equity_calendar import EquityCalendar
 from app.sessions.holiday_provider import StaticUsEquityHolidayProvider
 from app.sessions.session_manager import CryptoSessionManager, EquitySessionManager
 from app.signals.lifecycle_context import SignalLifecycleContextBuilder
+from app.simulation.simulation_context import ShadowSimulationContextBuilder
 from app.strategy.evaluation_context import EvaluationContextBuilder
 from app.strategy.feature_store import FeatureStore
 from app.telegram.authorization import TelegramAuthorizer
@@ -119,6 +132,8 @@ class AppContext:
     strategy: StrategyEvaluationJob | None = None
     risk: RiskPlanEvaluationJob | None = None
     signals: SignalLifecycleMonitorJob | None = None
+    shadow: ShadowSimulationMonitorJob | None = None
+    backtest: BacktestRunner | None = None
     start_correlation_id: str = ""
     started_at: datetime = field(default_factory=lambda: datetime.now(tz=UTC))
     extra: dict[str, Any] = field(default_factory=dict)
@@ -127,6 +142,8 @@ class AppContext:
         log = get_logger("bootstrap")
         if self.universe_job is not None:
             await self.universe_job.stop()
+        if self.shadow is not None:
+            await self.shadow.stop()
         if self.signals is not None:
             await self.signals.stop()
         if self.risk is not None:
@@ -476,6 +493,8 @@ async def build_context(settings: Settings) -> AppContext:
                 ctx_after.risk.trigger()
             if ctx_after is not None and ctx_after.signals is not None:
                 ctx_after.signals.trigger()
+            if ctx_after is not None and ctx_after.shadow is not None:
+                ctx_after.shadow.trigger()
 
         on_refresh = _sync_after_refresh
         await ws_client.start()
@@ -604,6 +623,59 @@ async def build_context(settings: Settings) -> AppContext:
         )
         await signals_job.start()
 
+    # --- phase 11: hypothetical simulation / backtesting (off by default) ---
+    shadow_job: ShadowSimulationMonitorJob | None = None
+    if settings.shadow.mode_enabled:
+        shadow_builder = ShadowSimulationContextBuilder(
+            settings.shadow,
+            settings.costs,
+            RiskPlanRepository(db.session_factory),
+            SetupCandidateRepository(db.session_factory),
+            SignalEventRepository(db.session_factory),
+            FundingRateRepository(db.session_factory),
+            OrderbookSnapshotRepository(db.session_factory),
+            market_data,
+            data_quality,
+            books,
+        )
+        shadow_job = ShadowSimulationMonitorJob(
+            settings.shadow,
+            settings.costs,
+            settings.simulation_reporting,
+            shadow_builder,
+            SignalLifecycleRepository(db.session_factory),
+            SimulationRunRepository(db.session_factory),
+            SimulatedPositionRepository(db.session_factory),
+            SimulatedExecutionRepository(db.session_factory),
+            SimulationEventRepository(db.session_factory),
+            SimulationRejectionRepository(db.session_factory),
+            PerformanceMetricRepository(db.session_factory),
+            FeeScheduleRepository(db.session_factory),
+            bot_state,
+        )
+        await shadow_job.start()
+
+    backtest_runner: BacktestRunner | None = None
+    if settings.backtest.enabled:
+        # explicit local runs only - nothing is scheduled automatically
+        backtest_runner = BacktestRunner(
+            settings.backtest,
+            settings.shadow,
+            settings.strategy,
+            settings.risk,
+            settings.costs,
+            settings.signals,
+            settings.simulation_reporting,
+            ExperimentRepository(db.session_factory),
+            SimulationRunRepository(db.session_factory),
+            BacktestRunRepository(db.session_factory),
+            SimulatedPositionRepository(db.session_factory),
+            SimulatedExecutionRepository(db.session_factory),
+            SimulationEventRepository(db.session_factory),
+            SimulationRejectionRepository(db.session_factory),
+            PerformanceMetricRepository(db.session_factory),
+        )
+
     universe_job: UniverseRefreshJob | None = None
     if settings.universe.refresh_enabled:
         universe_job = UniverseRefreshJob(instrument_service, settings.universe, on_refresh)
@@ -641,6 +713,8 @@ async def build_context(settings: Settings) -> AppContext:
         strategy=strategy_job,
         risk=risk_job,
         signals=signals_job,
+        shadow=shadow_job,
+        backtest=backtest_runner,
         start_correlation_id=start_correlation_id,
     )
     ctx_holder["ctx"] = ctx

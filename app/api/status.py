@@ -135,6 +135,24 @@ async def status(request: Request) -> dict[str, Any]:
     else:
         signals_status = "disabled"
 
+    shadow = getattr(ctx, "shadow", None)
+    shadow_status: dict[str, Any] | str
+    if shadow is not None:
+        shadow_status = await shadow.status_stats()
+    elif settings.shadow.mode_enabled:
+        shadow_status = "enabled_not_initialized"
+    else:
+        shadow_status = "disabled"
+
+    backtest = getattr(ctx, "backtest", None)
+    backtest_status: dict[str, Any] | str
+    if backtest is not None:
+        backtest_status = await backtest.status_stats()
+    elif settings.backtest.enabled:
+        backtest_status = "enabled_not_initialized"
+    else:
+        backtest_status = "disabled"
+
     telegram_subsystem = getattr(ctx, "telegram", None)
     telegram: dict[str, Any] | str
     if telegram_subsystem is not None:
@@ -166,4 +184,6 @@ async def status(request: Request) -> dict[str, Any]:
         "strategy": strategy_status,
         "risk": risk_status,
         "signals": signals_status,
+        "shadow_simulation": shadow_status,
+        "backtest": backtest_status,
     }

@@ -7,6 +7,7 @@ from typing import Any
 from fastapi import APIRouter, Request
 
 from app.observability.metrics import metrics
+from app.simulation.explainability import BACKTEST_DISCLAIMER, SIMULATION_DISCLAIMER
 
 router = APIRouter()
 
@@ -63,7 +64,20 @@ async def dashboard(request: Request) -> dict[str, Any]:
     signals_dashboard: dict[str, Any] | None = None
     if signals is not None:
         signals_dashboard = await signals.dashboard_details()
+    shadow = getattr(ctx, "shadow", None)
+    shadow_dashboard: dict[str, Any] | None = None
+    if shadow is not None:
+        shadow_dashboard = await shadow.dashboard_details()
+    backtest = getattr(ctx, "backtest", None)
+    backtest_dashboard: dict[str, Any] | None = None
+    if backtest is not None:
+        backtest_dashboard = await backtest.dashboard_details()
+    simulation_active = shadow_dashboard is not None or backtest_dashboard is not None
     return {
+        # phase-11 disclaimers stay at the very top of the payload
+        "simulation_disclaimers": (
+            [SIMULATION_DISCLAIMER, BACKTEST_DISCLAIMER] if simulation_active else []
+        ),
         "enabled_markets": enabled_markets,
         "open_signals": open_signals,
         "data_quality": data_quality.summary() if data_quality is not None else None,
@@ -72,5 +86,7 @@ async def dashboard(request: Request) -> dict[str, Any]:
         "strategy": strategy_dashboard,
         "risk": risk_dashboard,
         "signals": signals_dashboard,
+        "shadow_simulation": shadow_dashboard,
+        "backtest": backtest_dashboard,
         "metrics": metrics.snapshot(),
     }

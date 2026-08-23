@@ -13,6 +13,7 @@ app/
 ├── strategy/        # Phase 8 – regelbasierte Research-Engine: purer Kern (Features/Regime/Regeln/Score) + Context-Builder/Feature-Store als Adapter; kein LLM-Einfluss
 ├── risk/ costs/     # Phase 9 – Eligibility-Plaene und Kostenmodell; purer Kern + Context-Builder; identisch fuer spaetere Shadow-/Backtest-Nutzung
 ├── signals/         # Phase 10 – Internal Signal Lifecycle: State Machine, Monitore, Engine (pur) + lifecycle_context.py als einziger Adapter
+├── simulation/      # Phase 11 – hypothetische Simulation/Backtesting: Delay-, Book-Walk-, Kosten- und Replay-Kern (pur) + simulation_context.py/data_replay.py als Adapter
 ├── jobs/            # periodische Tasks (Universe Refresh aktiv; weitere folgen)
 ├── api/             # FastAPI: /health, /status, /dashboard
 └── observability/   # JSON-Logging (Secret-Redaction), Metriken, Alerts
@@ -485,3 +486,60 @@ Kernentscheidungen:
 `signal_updates`, `signal_lifecycle_rejections` (Events/Updates mit
 Idempotenz-Unique-Constraints, Rejections aggregiert je
 Kontext/Code/Zeitfenster/Modellversion).
+
+
+---
+
+## Simulation & Backtesting (Phase 11)
+
+Zwei hypothetische Analysemodi ueber denselben puren Simulationskern -
+keine Orders, keine Ausfuehrung, keine reale Position, keine
+Telegram-Ausgabe (Isolationstest). Fachliche Details:
+[`docs/simulation-and-backtesting.md`](simulation-and-backtesting.md).
+
+```mermaid
+flowchart LR
+    LC["Phase-10 Lifecycles<br/>(ENTRY_CONFIRMED ... terminal)"]
+    HIST[("Historische oeffentliche Daten<br/>Kerzen · BBO · Buch · Funding")]
+    SJOB["ShadowSimulationMonitorJob<br/>bounded queue · dedupe · PAUSED-Gate"]
+    RUN["BacktestRunner<br/>nur explizite lokale Laeufe ·<br/>Manifest · Validierung · Checkpoints"]
+    CORE["Simulationskern (pur)<br/>Follower-Delay → Book-Walk →<br/>Kosten/Funding → Netto-R"]
+    REPLAY["ReplayClock + EventOrderingPolicy<br/>kausal · Look-ahead-Guard"]
+    DB[("experiments · manifests · runs ·<br/>simulated_positions/executions ·<br/>events · rejections · metrics")]
+    API["/health · /status · /dashboard<br/>(Pflicht-Disclaimer ganz oben)"]
+
+    LC --> SJOB --> CORE
+    HIST --> RUN --> REPLAY --> CORE
+    CORE --> DB
+    SJOB --> API
+    RUN --> API
+```
+
+Kernentscheidungen:
+
+- **Ein Kern fuer beide Modi**: Shadow Mode und Backtest teilen Delay-,
+  Book-Walk-, Kosten-, Funding- und Ergebnislogik, damit Resultate
+  vergleichbar bleiben.
+- **Kostenwiederverwendung statt Duplikat**: Fees, VWAP-Slippage und
+  Funding stammen unveraendert aus `app/costs/` (Phase 9).
+- **Kausalitaet zuerst**: versionierte Ereignisreihenfolge (`rov-1`),
+  monotone Replay-Uhr, harter Look-ahead-Guard; geschlossene Kerzen
+  werden erst nach ihrer Schlusszeit sichtbar.
+- **Konservative Ablehnung**: fehlende/stale/zu duenne Daten erzeugen
+  strukturierte Rejection-Codes; nicht modellierbare Exits werden als
+  `UNMODELED_EXIT` gekennzeichnet und zaehlen nicht als vollstaendige
+  Simulation.
+- **Reproduzierbarkeit**: immutable Manifeste mit allen Versionen,
+  Hashes und Seeds; Konfigurationsaenderung = neuer Lauf; Checkpoints
+  erlauben Resume ohne doppelte Ereignisanwendung.
+- **Stichprobendisziplin**: unterhalb der Mindestzahl vollstaendiger
+  Simulationen gilt `INSUFFICIENT_SAMPLE` und Quotenkennzahlen werden
+  zurueckgehalten.
+
+### Persistenz (Alembic `0007`)
+
+12 neue Tabellen: `experiments`, `experiment_manifests`,
+`simulation_runs`, `backtest_runs`, `simulated_positions`,
+`simulated_executions`, `simulation_events`, `simulation_rejections`,
+`walk_forward_splits`, `performance_metric_sets`,
+`performance_metric_values`, `simulation_data_quality_summaries`.

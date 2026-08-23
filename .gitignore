@@ -27,3 +27,8 @@ htmlcov/
 
 # Runtime artifacts
 *.log
+
+# Lokale Backtest-Eingabedaten (nur Struktur wird versioniert)
+data/backtest_input/*
+!data/backtest_input/.gitkeep
+!data/backtest_input/README.md

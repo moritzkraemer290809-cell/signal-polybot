@@ -208,3 +208,14 @@ Referenzwerte des Plans werden dabei als unveraenderliche Snapshot-Felder
 kopiert; ein neuer/geaenderter Plan ersetzt nie ein laufendes Signal in
 place, sondern supersedet es (neues Signal nur ueber eine eigene
 Admission). Details: [`docs/signal-lifecycle.md`](signal-lifecycle.md).
+
+## Nutzung in Simulation und Backtest (Phase 11)
+
+Die hypothetische Simulation dupliziert die Kostenlogik nicht: Fee-
+Aufloesung, Orderbuch-VWAP-Slippage, Stress-Puffer und Funding-Projektion
+stammen unveraendert aus dieser Engine. Der modellierte Entry entsteht aus
+einem konservativen Book-Walk auf der adversen Seite zum **verzoegerten**
+Zeitpunkt, der modellierte Exit zum Zeitpunkt des Phase-10-Ereignisses;
+Funding wird ueber die tatsaechliche modellierte Haltedauer projiziert.
+Alle Ergebnisse sind hypothetische Modellwerte. Details:
+[`docs/simulation-and-backtesting.md`](simulation-and-backtesting.md).

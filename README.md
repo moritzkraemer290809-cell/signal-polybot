@@ -24,7 +24,9 @@ in eine private Telegram-Gruppe. **Der Nutzer handelt manuell.**
 | 7 | Market Selection Engine, Session Manager, Kalender, Watchlist | ✅ |
 | 8 | Strategy Research Foundation: Marktstruktur, Features, Regime, Setup-Kandidaten (nur Research, keine Signale) | ✅ |
 | 9 | Risiko-/Kosten-Engine: technische Invalidation, Referenzrahmen, Margin-Plausibilität, Signal-Eligibility-Pläne (nur Research) | ✅ |
-| 10+ | Signal-Lifecycle, Shadow Mode, Backtests | ⏳ geplant |
+| 10 | Internal Signal Lifecycle: State Machine, Entry-/Exit-Monitoring, Audit-Trail (kein Handelssignal) | ✅ |
+| 11 | Shadow Mode, historische Backtests, Walk-Forward, hypothetische Analytics (keine reale Ausführung) | ✅ |
+| 12+ | Telegram-Signalausgabe | ⏳ geplant |
 
 ## Architekturüberblick
 
@@ -41,6 +43,7 @@ flowchart LR
         STRAT["Strategy Research<br/>(Phase 8: Kandidaten, kein Signal)"]
         RISK["Risk & Cost Research<br/>(Phase 9: Eligibility-Pläne, kein Signal)"]
         MON["Signal Lifecycle & Monitoring<br/>(Phase 10)"]
+        SIM["Simulation & Backtesting<br/>(Phase 11: hypothetisch, keine Ausführung)"]
         API["FastAPI<br/>/health /status /dashboard"]
     end
 
@@ -52,7 +55,7 @@ flowchart LR
     WS --> ADP
     DATA --> PG
     DATA --> RD
-    DATA --> STRAT --> RISK --> MON
+    DATA --> STRAT --> RISK --> MON --> SIM
     MON -.spaeter.-> TGQ["Persistente Delivery Queue"] --> TG
     TGQ <-.Admin-Kommandos.-> TG
     API --> PG
@@ -67,6 +70,8 @@ Schichtenregeln:
 Details: [`docs/architecture.md`](docs/architecture.md),
 [`docs/strategy.md`](docs/strategy.md),
 [`docs/risk-and-costs.md`](docs/risk-and-costs.md),
+[`docs/signal-lifecycle.md`](docs/signal-lifecycle.md),
+[`docs/simulation-and-backtesting.md`](docs/simulation-and-backtesting.md),
 [`docs/operations.md`](docs/operations.md),
 [`docs/security.md`](docs/security.md)
 
@@ -123,7 +128,8 @@ Alle Parameter, Schwellenwerte und Secrets kommen aus `.env` /
 Environment-Variablen und sind in [`app/config.py`](app/config.py) typisiert.
 Wichtige Gruppen: `APP_*`, `DATABASE_*`, `REDIS_*`, `POLYMARKET_*`,
 `TELEGRAM_*`, `UNIVERSE_*`, `DATA_QUALITY_*`, `MARKET_SELECTION_*`,
-`STRATEGY_*`, `RISK_*`, `COST_*` — siehe kommentierte
+`STRATEGY_*`, `RISK_*`, `COST_*`, `SIGNAL_*`, `SHADOW_*`, `BACKTEST_*`,
+`SIMULATION_*` — siehe kommentierte
 [`.env.example`](.env.example).
 
 Marktuniversum V1: `AAPL-PERP` (Equity) und `BTC-PERP` (Crypto); weitere Märkte
@@ -227,6 +233,35 @@ Ein DB-/Redis-Ausfall degradiert `/health` (503) bzw. liefert `database:
   Crash-Recovery. `SIGNAL_LIFECYCLE_TELEGRAM_OUTPUT_ENABLED=true` wird vom
   Konfig-Validator hart abgelehnt. Details:
   [`docs/signal-lifecycle.md`](docs/signal-lifecycle.md).
+
+## Simulation & Backtesting (Phase 11)
+
+> **Hypothetische Simulation / Shadow-Auswertung. Keine reale
+> Ausfuehrung, keine reale Position und keine Garantie zukuenftiger
+> Ergebnisse.**
+
+- Zwei strikt getrennte, rein hypothetische Analysemodi: **Shadow Mode**
+  (modelliert einen zeitverzoegerten Follower auf reale Phase-10-
+  Lifecycles) und **Historical Backtest** (kausales Replay persistierter
+  oeffentlicher Daten). Beide nutzen denselben puren Simulationskern und
+  damit identische Delay-, Kosten-, Slippage-, Funding- und
+  Lifecycle-Annahmen.
+- Konservative Modellierung: Book-Walk immer auf der adversen Seite,
+  Kosten/Funding aus der Phase-9-Engine (nicht dupliziert), fehlende oder
+  stale Daten fuehren zu strukturierten Ablehnungen statt idealisierter
+  Preise; ein nicht modellierbarer Exit zaehlt nie als vollstaendige
+  Simulation.
+- Kausales Replay mit versionierter Ereignisreihenfolge, monotoner
+  Replay-Uhr und hartem Look-ahead-Guard; Datenluecken werden abgelehnt
+  oder explizit ausgeschlossen (`COMPLETED_WITH_GAPS`), nie interpoliert.
+- Walk-Forward waehlt Konfigurationen ausschliesslich aus Train-/
+  Validation-Fenstern und nie nach hoechster Rendite allein; zu kleine
+  Stichproben ergeben `INSUFFICIENT_SAMPLE` statt einer Aussage.
+- Immutable Experiment-Manifeste mit allen Modellversionen, Hashes,
+  Seeds und Datenquellen; jede Konfigurationsaenderung erzeugt einen
+  neuen Lauf. Shadow Mode, Backtests und Exporte sind **standardmaessig
+  deaktiviert**. Details:
+  [`docs/simulation-and-backtesting.md`](docs/simulation-and-backtesting.md).
 
 ## Telegram (Phase 6)
 

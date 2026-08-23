@@ -89,6 +89,22 @@ async def health(request: Request, response: Response) -> dict[str, Any]:
     else:
         signals_status = "disabled"
 
+    shadow = getattr(ctx, "shadow", None)
+    if shadow is not None:
+        shadow_status: dict[str, Any] | str = await shadow.health_stats()
+    elif ctx.settings.shadow.mode_enabled:
+        shadow_status = "enabled_not_initialized"
+    else:
+        shadow_status = "disabled"
+
+    backtest = getattr(ctx, "backtest", None)
+    if backtest is not None:
+        backtest_status: dict[str, Any] | str = await backtest.health_stats()
+    elif ctx.settings.backtest.enabled:
+        backtest_status = "enabled_not_initialized"
+    else:
+        backtest_status = "disabled"
+
     components = {
         "process": "ok",
         "postgres": "ok" if db_ok else "unavailable",
@@ -100,6 +116,8 @@ async def health(request: Request, response: Response) -> dict[str, Any]:
         "strategy": strategy_status,
         "risk": risk_status,
         "signals": signals_status,
+        "shadow_simulation": shadow_status,
+        "backtest": backtest_status,
     }
     healthy = db_ok and redis_ok
     if not healthy:

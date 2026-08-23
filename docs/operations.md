@@ -206,6 +206,49 @@ Korrelations-IDs werden pro Signal-Lifecycle gebunden (ab Phase 10 durchgaengig)
   `signal.expired_leases`, `signal.overlap_skipped`. Details:
   [`docs/signal-lifecycle.md`](signal-lifecycle.md).
 
+## Simulation & Backtesting (Phase 11)
+
+- **Standardmaessig aus**: `SHADOW_MODE_ENABLED=false`,
+  `BACKTEST_ENABLED=false`, `SIMULATION_EXPORT_ENABLED=false`. Erst nach
+  bewusster lokaler Aktivierung laufen hypothetische Auswertungen.
+- Zustand: `/health` -> `shadow_simulation` und `backtest`
+  (Subsystem-State, Job-Liveness, laufende Laeufe, letzter Erfolg);
+  `/status` -> Simulationen nach Status, letzte Laeufe, Modell-/
+  Manifest-Versionen, Sample-Status; `/dashboard` -> beide
+  Pflicht-Disclaimer ganz oben, Experimente, Laeufe, Simulationen mit
+  Kostenaufloesung, Metriken samt Stichprobengrenze, ausgeschlossene
+  Datenabschnitte.
+- **Backtests laufen nie automatisch**: jeder Lauf wird explizit lokal
+  angefordert und benoetigt ein vollstaendiges, immutables Manifest.
+  Fehlt eine Pflichtangabe, wird der Lauf mit `MANIFEST_INVALID`
+  abgelehnt.
+- Datenluecken: ohne `BACKTEST_ALLOW_SEGMENTED_DATA` wird der Lauf
+  abgelehnt (`DATA_GAP` / `BACKTEST_DATA_INCOMPLETE`); mit Segmentierung
+  endet er als `COMPLETED_WITH_GAPS` und listet die ausgeschlossenen
+  Intervalle. Fehlende Daten werden nie interpoliert.
+- Lokale Eingabedateien liegen ausschliesslich unter
+  `BACKTEST_ALLOWED_INPUT_DIRECTORY` (repository-relativ, ohne `..`).
+- Keine Simulationen sichtbar? `/dashboard` ->
+  `shadow_simulation.recent_rejections` zeigt die strukturierten Codes
+  (z. B. `ENTRY_BOOK_STALE`, `FUNDING_UNAVAILABLE`,
+  `ENTRY_SLIPPAGE_EXCESSIVE`). Eine Ablehnung ist ein korrektes,
+  konservatives Ergebnis - kein Fehler.
+- Globaler PAUSED-Modus: keine neuen simulierten Positionen.
+- DB-Ausfall: Subsystem `DEGRADED`; eine nicht persistierte Simulation
+  wird nie als abgeschlossen gemeldet. Redis wird von Phase 11 nicht
+  benoetigt. Abgeschlossene Laeufe werden nie ueberschrieben.
+- Wenige vollstaendige Simulationen: Metriken tragen
+  `INSUFFICIENT_SAMPLE`, Quotenkennzahlen werden unterdrueckt - daraus
+  darf keine Aussage ueber Setup-Qualitaet abgeleitet werden.
+- Metriken (Auswahl): `shadow_simulations_created/completed/incomplete/
+  rejected`, `shadow_simulation_entry_delay_seconds`,
+  `backtest_runs_started/completed/rejected/failed`,
+  `backtest_events_replayed`, `backtest_lookahead_guard_rejections`,
+  `backtest_data_gap_intervals`, `simulation_dedupe_suppressed`,
+  `simulation_costs_total_modeled`, `simulation_funding_unavailable`,
+  `performance_metrics_insufficient_sample`. Details:
+  [`docs/simulation-and-backtesting.md`](simulation-and-backtesting.md).
+
 ## Backup & Recovery
 
 Persistente Daten liegen in den Volumes `polysignal_pgdata` und

@@ -402,3 +402,166 @@ def test_strategy_layer_isolation_and_no_trade_parameters() -> None:
         lowered = source.lower()
         for term in forbidden_terms:
             assert term not in lowered, f"{path} contains trade parameter term {term!r}"
+
+
+def test_simulation_layer_isolation() -> None:
+    """Phase-11 simulation modules: pure, deterministic model logic.
+
+    The core may reuse the phase-9 cost engine and drive the real phase
+    8/9/10 domain cores (backtest replay), but never imports Telegram,
+    market adapters or network clients, and only the two adapter modules
+    may touch repositories/data services.
+    """
+    forbidden_imports = (
+        "app.telegram",
+        "app.adapters",
+        "app.monitoring",
+        "httpx",
+        "websockets",
+        "aiogram",
+        "requests",
+        "urllib.request",
+        "socket",
+    )
+    #: only these simulation modules may reach persistence/data services
+    adapter_modules = {"simulation_context.py", "data_replay.py"}
+    core_forbidden = (*forbidden_imports, "app.repositories", "app.data")
+
+    simulation_files = sorted((APP_DIR / "simulation").rglob("*.py"))
+    assert len(simulation_files) > 20
+    for path in simulation_files:
+        forbidden = forbidden_imports if path.name in adapter_modules else core_forbidden
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            modules: list[str] = []
+            if isinstance(node, ast.Import):
+                modules = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                modules = [node.module]
+            for module in modules:
+                for prefix in forbidden:
+                    assert not module.startswith(prefix), (
+                        f"{path} imports {module!r} - simulation isolation violated"
+                    )
+
+
+def test_simulation_layer_has_no_execution_code_paths() -> None:
+    """No order, wallet, signing or account identifier anywhere in phase 11.
+
+    Identifiers are checked via the AST so that documentation which
+    explicitly NEGATES these concepts ("no wallet", "never a fill") stays
+    allowed while real code paths cannot slip in.
+    """
+    forbidden_identifiers = (
+        "wallet",
+        "private_key",
+        "place_order",
+        "create_order",
+        "submit_order",
+        "cancel_order",
+        "order_client",
+        "sign_transaction",
+        "account_balance",
+        "api_secret",
+    )
+    files = [
+        *sorted((APP_DIR / "simulation").rglob("*.py")),
+        APP_DIR / "jobs" / "shadow_simulation_monitor.py",
+        APP_DIR / "jobs" / "backtest_runner.py",
+    ]
+    for path in files:
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            names: list[str] = []
+            if isinstance(node, ast.Name):
+                names = [node.id]
+            elif isinstance(node, ast.Attribute):
+                names = [node.attr]
+            elif isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+                names = [node.name]
+            elif isinstance(node, ast.arg):
+                names = [node.arg]
+            for name in names:
+                lowered = name.lower()
+                for term in forbidden_identifiers:
+                    assert term not in lowered, (
+                        f"{path} defines/uses identifier {name!r} containing {term!r}"
+                    )
+
+
+def test_simulation_user_facing_text_is_hypothetical() -> None:
+    """Rendered simulation texts carry the disclaimers and no success words."""
+    from app.simulation.explainability import (
+        BACKTEST_DISCLAIMER,
+        SIMULATION_DISCLAIMER,
+        contains_forbidden_language,
+    )
+
+    assert "Hypothetische Simulation" in SIMULATION_DISCLAIMER
+    assert "keine reale Position" in SIMULATION_DISCLAIMER
+    assert "historische Daten" in BACKTEST_DISCLAIMER
+    assert contains_forbidden_language(SIMULATION_DISCLAIMER) == ()
+    assert contains_forbidden_language(BACKTEST_DISCLAIMER) == ()
+
+    # the rendering helpers must never emit execution/fill vocabulary
+    for path in sorted((APP_DIR / "simulation").rglob("*.py")):
+        source = path.read_text()
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
+                continue
+            text = node.value.lower()
+            if "never" in text or "no fill" in text or "forbidden" in text:
+                continue  # explicit negations are the point
+            for term in ("wurde ausgefuehrt", "fill erhalten", "position eroeffnet"):
+                assert term not in text, f"{path} contains execution wording {term!r}"
+
+
+def test_simulation_never_reaches_telegram() -> None:
+    """Phase 11 has no Telegram path at all (jobs included)."""
+    files = [
+        *sorted((APP_DIR / "simulation").rglob("*.py")),
+        APP_DIR / "jobs" / "shadow_simulation_monitor.py",
+        APP_DIR / "jobs" / "backtest_runner.py",
+    ]
+    for path in files:
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            modules: list[str] = []
+            if isinstance(node, ast.Import):
+                modules = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                modules = [node.module]
+            for module in modules:
+                assert "telegram" not in module.lower(), (
+                    f"{path} imports {module!r} - phase 11 sends no Telegram output"
+                )
+
+
+def test_backtest_input_directory_is_repository_local() -> None:
+    """The configured replay input directory may never escape the repo."""
+    from app.config import BacktestSettings
+
+    settings = BacktestSettings(_env_file=None)
+    resolved = (REPO_ROOT / settings.allowed_input_directory).resolve()
+    assert resolved.is_relative_to(REPO_ROOT)
+    assert ".." not in settings.allowed_input_directory
+
+    import pytest as _pytest
+
+    for bad in ("../elsewhere", "/etc", "~/data"):
+        with _pytest.raises(ValueError):
+            BacktestSettings(_env_file=None, allowed_input_directory=bad)
+
+
+def test_simulation_disabled_by_default() -> None:
+    """Shadow mode, backtesting and exports are opt-in, never default-on."""
+    from app.config import (
+        BacktestSettings,
+        ShadowSimulationSettings,
+        SimulationReportingSettings,
+    )
+
+    assert ShadowSimulationSettings(_env_file=None).mode_enabled is False
+    assert BacktestSettings(_env_file=None).enabled is False
+    assert SimulationReportingSettings(_env_file=None).export_enabled is False

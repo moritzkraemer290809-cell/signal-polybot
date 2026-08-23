@@ -233,3 +233,13 @@ explizit freigegebene Phase.
 - Keine Performance-, Gewinn- oder Trefferquoten-Aussagen.
 - Kein automatischer Richtungswechsel und keine Reaktivierung terminaler
   Signale.
+
+## Uebergabe an Phase 11
+
+Der Lifecycle ist der einzige Eingang der hypothetischen Simulation
+(Phase 11): Shadow Mode uebernimmt nur Lifecycles mit bestaetigtem Entry
+und modelliert daraus einen zeitverzoegerten Follower; die
+Exit-Zeitpunkte stammen ausschliesslich aus den hier beschriebenen
+Lifecycle-Ereignissen. Phase 11 veraendert keine Lifecycle-Regel und
+erzeugt keine Zustaende - sie beobachtet nur. Details:
+[`docs/simulation-and-backtesting.md`](simulation-and-backtesting.md).
